@@ -1,0 +1,1609 @@
+{% extends "header.html" %}
+
+{% block title %}Create Table{% endblock %}
+
+{% block content %}
+    <!-- Sidebar -->
+    {% include 'sidebar.html' %}
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Content -->
+        <div class="content">
+            <div class="content-header">
+                <h2 class="content-title">Create Database Table</h2>
+                <p class="content-subtitle">Create new tables in SQL Server database with custom columns and data types</p>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <span>🗃️</span>
+                        Table Configuration
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <div class="info-box">
+                        <h3>ℹ️ Informasi Penting</h3>
+                        <ul>
+                            <li><strong>ID Column:</strong> Kolom ID (Primary Key) akan otomatis ditambahkan</li>
+                            <li><strong>Table Name:</strong> Hanya huruf, angka, dan underscore. Dimulai dengan huruf</li>
+                            <li><strong>Column Length:</strong> Untuk VARCHAR/CHAR (1-8000), untuk DECIMAL (precision atau precision,scale)</li>
+                            <li><strong>Data Types:</strong> Pilih tipe data sesuai kebutuhan kolom</li>
+                        </ul>
+                    </div>
+
+                    <form id="createTableForm">
+                        <div class="grid-container">
+                            <div class="form-group">
+                                <label for="table_name" class="form-label">Nama Tabel</label>
+                                <input type="text" id="table_name" name="table_name" class="form-control" 
+                                    placeholder="Contoh: employee_data, customer_template" required>
+                                <div class="form-text">Nama tabel harus dimulai dengan huruf dan hanya boleh mengandung huruf, angka, dan underscore</div>
+                                <div id="tableNameCheck" class="form-text"></div>
+                            </div>
+                            <div class="form-group">
+                                <label for="column_count" class="form-label">Jumlah Kolom</label>
+                                <input type="number" id="column_count" name="column_count" class="form-control" min="1" max="50" placeholder="Masukkan jumlah kolom (contoh: 5)" required>
+                                <!--<div class="form-text">Setelah diisi, kolom input akan muncul otomatis di bawah ini</div> -->
+                            </div>
+                            <div class="form-group">
+                                <label for="divisions" class="form-label">Divisi</label>
+                                {% if session.role_access == 'admin' %}
+                                    <select id="divisions" name="divisions" class="form-control form-select" required>
+                                        <option value="">-- Pilih Tabel Template --</option>
+                                        {% for division in divisions %}
+                                        <option value="{{ division }}">{{division}}</option>
+                                        {% endfor %}
+                                    </select>
+                                {% else %}
+                                    <input type="text" id="divisions" name="divisions" class="form-control" value="{{ session.division }}" readonly>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#createTemplateModal">
+                                <span>➕</span> Create Template
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="loading" id="loading">
+                        <div class="spinner"></div>
+                        <p>Membuat tabel database...</p>
+                    </div>
+
+                    <div class="result" id="result">
+                        <div class="result-title" id="resultTitle"></div>
+                        <div id="resultMessage"></div>
+                        <div class="result-details" id="resultDetails"></div>
+                    </div>
+
+                    <div class="analysis-result" id="previewResult">
+                        <h4>📋 Preview Query SQL</h4>
+                        <div id="previewContent"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <span>📊</span>
+                        Existing Tables & Templates
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table id="tablesDataTable" class="table table-striped table-bordered" style="width:100%">
+                            <thead>
+                                <tr>
+                                    <th>Table Name</th>
+                                    <th>Division</th> <!-- ubah dari Column Count -->
+                                    <th>Create Date</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Data will be populated via AJAX -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="createTemplateModal" tabindex="-1" aria-labelledby="createTemplateModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="createTemplateModalLabel">Tambah Kolom Template</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <strong>Info:</strong> Template akan dibuat dengan <span id="templateColumnCount"></span> kolom sesuai dengan input "Jumlah Kolom"
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-bordered" id="templateColumnsTable">
+                        <thead>
+                        <tr>
+                            <th>Column Name</th>
+                            <th>Data Type</th>
+                            <th>Allow Nulls</th>
+                            <th>Default Value</th>
+                            <th>Action</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <!-- Baris kolom akan ditambahkan secara dinamis -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="button" class="btn btn-success" onclick="saveTemplateColumns()">Simpan Template</button>
+            </div>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="modal fade" id="editTableModal" tabindex="-1" aria-labelledby="editTableModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editTableModalLabel">
+                        <i class="fas fa-edit"></i> Edit Table/Template
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editTableForm">
+                        <input type="hidden" id="edit_table_id" name="table_id">
+                        <div class="mb-3">
+                            <label for="edit_table_name" class="form-label">Table Name</label>
+                            <input type="text" class="form-control" id="edit_table_name" name="table_name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Columns</label>
+                            <div id="editColumnsContainer">
+                                <!-- Columns will be populated dynamically -->
+                            </div>
+                            <button type="button" class="btn btn-success btn-sm mt-2" onclick="addEditColumn()">
+                                <i class="fas fa-plus"></i> Add Column
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="saveTableChanges()">
+                        <i class="fas fa-save"></i> Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DELETE CONFIRMATION MODAL -->
+    <div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-labelledby="deleteConfirmModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deleteConfirmModalLabel">
+                        <i class="fas fa-exclamation-triangle text-danger"></i> Confirm Deletion
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete this template or table?</p>
+                    <p><strong>Table Name:</strong> <span id="deleteTableName"></span></p>
+                    <p class="text-danger"><small><i class="fas fa-warning"></i> This action cannot be undone!</small></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" onclick="confirmDelete()">
+                        <i class="fas fa-trash"></i> Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <!-- DataTables Scripts -->
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let columnCount = 0;
+        let dataTypes = [];
+        let isSubmitting = false;
+        let tableCheckTimeout;
+        let tablesDataTable;
+        let editColumnCount = 0;
+        let currentTableToDelete = null;
+
+        $(document).ready(function() {
+            
+            // Load existing tables on page load
+            loadExistingTables();
+            
+            // Set up event listeners
+            setupEventListeners();
+        });
+
+        function setupEventListeners() {
+            // Column count change event
+            $('#column_count').on('input', function() {
+                const count = parseInt($(this).val());
+                if (count > 0) {
+                    updateTemplateColumnCount(count);
+                }
+            });
+            
+            // Table name validation
+            $('#table_name').on('input', function() {
+                validateTableName($(this).val());
+            });
+        }
+
+        function updateTemplateColumnCount(count) {
+            $('#templateColumnCount').text(count);
+            
+            const tbody = $('#templateColumnsTable tbody');
+            tbody.empty();
+            
+            // Get data types if not already loaded
+            if (dataTypes.length === 0) {
+                loadDataTypes();
+            }
+            
+            // Add rows for each column
+            for (let i = 0; i < count; i++) {
+                addTemplateColumnRow(tbody, i + 1);
+            }
+        }
+
+        function validateTableName(tableName) {
+            const checkElement = $('#tableNameCheck');
+            
+            if (!tableName) {
+                checkElement.text('').removeClass('text-success text-danger');
+                return;
+            }
+            
+            // Check format: huruf awal, lalu huruf/angka/underscore
+            if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(tableName)) {
+                checkElement.text('❌ Format tidak valid').removeClass('text-success').addClass('text-danger');
+                return;
+            }
+
+            // Tidak boleh mengandung kata ssot_ (case insensitive)
+            if (/ssot_/i.test(tableName)) {
+                checkElement.text('❌ Nama tabel tidak boleh mengandung kata "ssot_"').removeClass('text-success').addClass('text-danger');
+                return;
+            }
+
+            // Clear previous timeout
+            if (tableCheckTimeout) {
+                clearTimeout(tableCheckTimeout);
+            }
+
+            // Check if table exists after delay
+            tableCheckTimeout = setTimeout(() => {
+                checkTableExists(tableName);
+            }, 500);
+        }
+
+        function addTemplateColumnRow(tbody, index) {
+            const row = $(`
+                <tr>
+                    <td>
+                        <input type="text" class="form-control form-control-sm" 
+                            placeholder="column_name_${index}" required>
+                    </td>
+                    <td>
+                        <select class="form-control form-control-sm" required>
+                            <option value="">-- Pilih --</option>
+                            <option value="VARCHAR">VARCHAR</option>
+                            <option value="NVARCHAR">NVARCHAR</option>
+                            <option value="INT">INT</option>
+                            <option value="BIGINT">BIGINT</option>
+                            <option value="DECIMAL">DECIMAL</option>
+                            <option value="FLOAT">FLOAT</option>
+                            <option value="DATE">DATE</option>
+                            <option value="DATETIME">DATETIME</option>
+                            <option value="BIT">BIT</option>
+                            <option value="TEXT">TEXT</option>
+                        </select>
+                    </td>
+                    <td>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="null_${index}">
+                            <label class="form-check-label" for="null_${index}">Allow NULL</label>
+                        </div>
+                    </td>
+                    <td>
+                        <input type="text" class="form-control form-control-sm" 
+                            placeholder="Default value (optional)">
+                    </td>
+                    <td>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="removeTemplateRow(this)">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `);
+            
+            tbody.append(row);
+        }
+
+        function removeTemplateRow(button) {
+            $(button).closest('tr').remove();
+        }
+
+        const updatedModalBody = `
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <strong>Info:</strong> Template akan dibuat dengan <span id="templateColumnCount"></span> kolom sesuai dengan input "Jumlah Kolom"
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-bordered" id="templateColumnsTable">
+                        <thead>
+                        <tr>
+                            <th>Column Name</th>
+                            <th>Data Type</th>
+                            <th>Allow Nulls</th>
+                            <th>Default Value</th>
+                            <th>Action</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <!-- Baris kolom akan ditambahkan secara dinamis -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            `;
+
+        function validateCreateTemplateForm() {
+            const tableName = document.getElementById('table_name').value.trim();
+            const columnCount = document.getElementById('column_count').value;
+            const divisions = document.getElementById('divisions').value;
+            
+            const createTemplateBtn = document.querySelector('button[data-bs-target="#createTemplateModal"]');
+            
+            if (tableName && columnCount && divisions) {
+                createTemplateBtn.disabled = false;
+                createTemplateBtn.classList.remove('btn-secondary');
+                createTemplateBtn.classList.add('btn-success');
+            } else {
+                createTemplateBtn.disabled = true;
+                createTemplateBtn.classList.remove('btn-success');
+                createTemplateBtn.classList.add('btn-secondary');
+            }
+        }
+
+        function saveTemplateColumns() {
+            const tableName = document.getElementById('table_name').value.trim();
+            const division = document.getElementById('divisions').value;
+            const rows = document.querySelectorAll('#templateColumnsTable tbody tr');
+            const columns = [];
+
+            if (!tableName) {
+                showAlert('error', 'Nama tabel harus diisi');
+                return;
+            }
+
+            if (!division) {
+                showAlert('error', 'Divisi harus dipilih');
+                return;
+            }
+
+            rows.forEach((row, index) => {
+                const name = row.cells[0].querySelector('input').value.trim();
+                const type = row.cells[1].querySelector('select').value;
+                const allowNulls = row.cells[2].querySelector('input').checked;
+                const defaultValue = row.cells[3].querySelector('input').value.trim();
+                
+                if (name && type) {
+                    columns.push({ 
+                        name, 
+                        type, 
+                        allow_nulls: allowNulls,
+                        default_value: defaultValue || null
+                    });
+                }
+            });
+
+            if (columns.length === 0) {
+                showAlert('error', 'Minimal harus ada satu kolom yang valid');
+                return;
+            }
+
+            // Send data to server
+            const templateData = {
+                table_name: tableName,
+                columns: columns,
+                division: division
+            };
+
+            fetch('/save-as-template', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(templateData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('createTemplateModal'));
+                    modal.hide();
+                    showAlert('success', 'Template berhasil disimpan!');
+                    loadExistingTables();
+                } else {
+                    showAlert('error', 'Gagal menyimpan template: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error saving template:', error);
+                showAlert('error', 'Terjadi kesalahan saat menyimpan template');
+            });
+        }
+
+        function toggleDefaultValue(element) {
+            const row = element.closest('tr');
+            const allowNullsCheckbox = row.querySelector('input[type="checkbox"]');
+            const defaultValueInput = row.querySelector('.default-value-input');
+            
+            if (allowNullsCheckbox && defaultValueInput) {
+                if (allowNullsCheckbox.checked) {
+                    // Allow Nulls is checked - hide default value
+                    defaultValueInput.style.display = 'none';
+                    defaultValueInput.value = '';
+                } else {
+                    // Allow Nulls is unchecked - show default value
+                    defaultValueInput.style.display = 'block';
+                }
+            }
+        }
+
+        function addTemplateRowWithData(columnNumber = null) {
+            const tableBody = document.querySelector('#templateColumnsTable tbody');
+            const row = document.createElement('tr');
+            
+            const columnName = columnNumber ? `column_${columnNumber}` : '';
+            
+            row.innerHTML = `
+            <td><input type="text" class="form-control" placeholder="column_name" value="${columnName}"></td>
+            <td>
+                <select class="form-select" onchange="toggleDefaultValue(this)">
+                    <option value="VARCHAR(255)">VARCHAR(255)</option>
+                    <option value="INT">INT</option>
+                    <option value="DATETIME">DATETIME</option>
+                    <option value="DECIMAL(10,2)">DECIMAL(10,2)</option>
+                    <option value="TEXT">TEXT</option>
+                    <option value="BOOLEAN">BOOLEAN</option>
+                    <option value="DATE">DATE</option>
+                    <option value="TIME">TIME</option>
+                    <option value="FLOAT">FLOAT</option>
+                    <option value="BIGINT">BIGINT</option>
+                </select>
+            </td>
+            <td class="text-center">
+                <input type="checkbox" class="form-check-input" checked onchange="toggleDefaultValue(this)">
+            </td>
+            <td class="text-center">
+                <input type="text" class="form-control default-value-input" placeholder="Default value" style="display: none;">
+            </td>
+            <td class="text-center">
+                <button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">🗑️</button>
+            </td>
+            `;
+            
+            tableBody.appendChild(row);
+        }
+
+        function initializeTemplateModal() {
+            const columnCount = parseInt(document.getElementById('column_count').value);
+            const tableBody = document.querySelector('#templateColumnsTable tbody');
+            
+            // Clear existing rows
+            tableBody.innerHTML = '';
+            
+            // Add rows sesuai jumlah kolom
+            for (let i = 1; i <= columnCount; i++) {
+                addTemplateRowWithData(i);
+            }
+        }
+
+        // Load data types when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initial state - disable button
+            const createTemplateBtn = document.querySelector('button[data-bs-target="#createTemplateModal"]');
+            createTemplateBtn.disabled = true;
+            createTemplateBtn.classList.add('btn-secondary');
+            
+            // Add event listeners
+            document.getElementById('table_name').addEventListener('input', validateCreateTemplateForm);
+            document.getElementById('column_count').addEventListener('input', validateCreateTemplateForm);
+            document.getElementById('divisions').addEventListener('change', validateCreateTemplateForm);
+            
+            // Add event listener untuk modal show
+            document.getElementById('createTemplateModal').addEventListener('show.bs.modal', function() {
+                initializeTemplateModal();
+            });
+            loadDataTypes();
+
+            // Initialize tooltips and load draft
+            setTimeout(() => {
+                addTooltips();
+                loadDraft();
+            }, 500);
+
+            // Add keyboard shortcuts
+            setTimeout(loadDraft, 500);
+            initializeDataTables();
+            loadExistingTables();
+            addKeyboardShortcuts();
+        });
+
+        // Load available SQL data types
+        function loadDataTypes() {
+            dataTypes = [
+                'VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR',
+                'INT', 'BIGINT', 'SMALLINT', 'TINYINT',
+                'DECIMAL', 'NUMERIC', 'FLOAT', 'REAL',
+                'DATE', 'DATETIME', 'DATETIME2', 'TIME',
+                'BIT', 'TEXT', 'NTEXT'
+            ];
+        }
+
+        // Check if table name exists
+        function checkTableExists(tableName) {
+            fetch(`/check-table-exists/${encodeURIComponent(tableName)}`)
+                .then(response => response.json())
+                .then(data => {
+                    const checkElement = $('#tableNameCheck');
+                    if (data.exists) {
+                        checkElement.text('❌ Tabel sudah ada').removeClass('text-success').addClass('text-danger');
+                    } else {
+                        checkElement.text('✅ Nama tabel tersedia').removeClass('text-danger').addClass('text-success');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking table:', error);
+                    $('#tableNameCheck')
+                        .text('⚠️ Terjadi kesalahan saat memeriksa tabel')
+                        .removeClass('text-success')
+                        .addClass('text-warning');
+                });
+        }
+
+        function checkTableExistsBeforeSubmit(tableName) {
+            return fetch(`/check-table-exists/${tableName}`)
+                .then(response => response.json())
+                .then(result => {
+                    if (result.success) {
+                        return result.exists;
+                    }
+                    throw new Error('Could not check table existence');
+                });
+        }
+
+        // Add table name validation - UNIFIED VERSION
+        function initializeTableNameValidation() {
+            const tableNameInput = document.getElementById('table_name');
+            if (!tableNameInput) return;
+
+            tableNameInput.addEventListener('input', function(e) {
+                const tableName = e.target.value.trim();
+                
+                // Clear previous timeout
+                clearTimeout(tableCheckTimeout);
+                
+                // Validate table name format
+                const validFormat = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(tableName);
+                const checkDiv = document.getElementById('tableNameCheck');
+                
+                if (tableName.length === 0) {
+                    checkDiv.innerHTML = '';
+                    return;
+                }
+                
+                if (!validFormat) {
+                    checkDiv.innerHTML = '<span style="color: #dc2626;">❌ Nama tabel tidak valid (harus dimulai huruf, hanya huruf/angka/underscore)</span>';
+                    return;
+                }
+                
+                // Show checking status
+                checkDiv.innerHTML = '<span style="color: #6b7280;">🔍 Memeriksa ketersediaan nama tabel...</span>';
+                
+                // Debounce the API call
+                tableCheckTimeout = setTimeout(() => {
+                    checkTableExists(tableName);
+                }, 500);
+            });
+        }
+
+        // Initialize table name validation when DOM is loaded
+        document.addEventListener('DOMContentLoaded', initializeTableNameValidation);
+
+        function removeColumn(id) {
+            const columnDiv = document.getElementById(`column_${id}`);
+            if (columnDiv) {
+                columnDiv.remove();
+            }
+            
+            // Renumber remaining columns
+            const remainingColumns = document.querySelectorAll('.column-item');
+            remainingColumns.forEach((col, index) => {
+                const header = col.querySelector('.column-header h5');
+                if (header) {
+                    header.textContent = `Kolom ${index + 1}`;
+                }
+            });
+        }
+
+        function toggleLengthField(columnId) {
+            const typeSelect = document.querySelector(`select[name="column_type_${columnId}"]`);
+            const lengthInput = document.querySelector(`input[name="column_length_${columnId}"]`);
+            
+            if (typeSelect && lengthInput) {
+                const selectedOption = typeSelect.options[typeSelect.selectedIndex];
+                const hasLength = selectedOption.getAttribute('data-has-length') === 'true';
+                
+                lengthInput.disabled = !hasLength;
+                lengthInput.required = hasLength;
+                
+                if (!hasLength) {
+                    lengthInput.value = '';
+                }
+            }
+        }
+
+        // Utility function to validate column names
+        function validateColumnName(name) {
+            const validFormat = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(name);
+            const reservedWords = [
+                'id', 'table', 'select', 'insert', 'update', 'delete', 'from', 'where', 
+                'order', 'by', 'group', 'having', 'join', 'left', 'right', 'inner', 
+                'outer', 'union', 'distinct', 'count', 'sum', 'avg', 'max', 'min',
+                'database', 'schema', 'index', 'primary', 'foreign', 'key', 'constraint',
+                'alter', 'drop', 'create', 'null', 'not', 'and', 'or', 'like', 'in',
+                'exists', 'between', 'case', 'when', 'then', 'else', 'end'
+            ];
+            
+            return {
+                isValid: validFormat && !reservedWords.includes(name.toLowerCase()),
+                message: !validFormat ? 
+                    'Nama kolom harus dimulai dengan huruf dan hanya boleh mengandung huruf, angka, dan underscore' :
+                    reservedWords.includes(name.toLowerCase()) ? 
+                    'Nama kolom tidak boleh menggunakan kata kunci SQL yang sudah ada' : ''
+            };
+        }
+
+        // Add real-time validation for column names - IMPROVED VERSION
+        function addColumnNameValidation(columnId) {
+            const nameInput = document.querySelector(`input[name="column_name_${columnId}"]`);
+            if (!nameInput || nameInput.hasAttribute('data-validated')) {
+                return;
+            }
+            
+            nameInput.setAttribute('data-validated', 'true');
+            
+            nameInput.addEventListener('input', function(e) {
+                const value = e.target.value.trim();
+                const validation = validateColumnName(value);
+                
+                // Remove existing validation message
+                const existingMessage = nameInput.parentNode.querySelector('.validation-message');
+                if (existingMessage) {
+                    existingMessage.remove();
+                }
+                
+                if (value && !validation.isValid) {
+                    const message = document.createElement('div');
+                    message.className = 'validation-message';
+                    message.style.cssText = 'color: #dc2626; font-size: 0.875rem; margin-top: 5px;';
+                    message.textContent = '❌ ' + validation.message;
+                    nameInput.parentNode.appendChild(message);
+                }
+            });
+        }
+
+        function previewTable() {
+            const formData = getFormData();
+            
+            if (!formData.table_name) {
+                showAlert('warning', 'Masukkan nama tabel terlebih dahulu');
+                return;
+            }
+            
+            if (formData.columns.length === 0) {
+                showAlert('warning', 'Tambahkan minimal satu kolom');
+                return;
+            }
+            
+            // Generate preview query
+            let query = `CREATE TABLE [${formData.table_name}] (\n`;
+            query += `    [id] INT IDENTITY(1,1) PRIMARY KEY,\n`;
+            
+            const columnDefs = formData.columns.map(col => {
+                let def = `    [${col.name}] ${col.type}`;
+                
+                if (col.length && ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR', 'VARBINARY', 'BINARY'].includes(col.type)) {
+                    def += `(${col.length})`;
+                } else if (col.length && ['DECIMAL', 'NUMERIC'].includes(col.type)) {
+                    def += `(${col.length})`;
+                }
+                
+                def += col.allow_nulls ? ' NULL' : ' NOT NULL';
+                return def;
+            });
+            
+            query += columnDefs.join(',\n');
+            query += '\n)';
+            
+            // Show preview
+            const previewDiv = document.getElementById('previewResult');
+            const previewContent = document.getElementById('previewContent');
+            
+            previewContent.innerHTML = `
+                <div class="preview-info">
+                    <h5>🗃️ Tabel: ${formData.table_name}</h5>
+                    <p>Total kolom: ${formData.columns.length + 1} (termasuk ID)</p>
+                </div>
+                <div class="query-preview">
+                    <h6>SQL Query:</h6>
+                    <pre><code>${query}</code></pre>
+                </div>
+                <div class="columns-preview">
+                    <h6>Struktur Kolom:</h6>
+                    <table style="width: 100%; margin-top: 10px;">
+                        <thead>
+                            <tr>
+                                <th>Nama Kolom</th>
+                                <th>Tipe Data</th>
+                                <th>Panjang</th>
+                                <th>Allow Nulls</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr style="background: #f0f9ff;">
+                                <td><strong>id</strong></td>
+                                <td>INT IDENTITY(1,1)</td>
+                                <td>-</td>
+                                <td>❌</td>
+                            </tr>
+                            ${formData.columns.map(col => `
+                                <tr>
+                                    <td><strong>${col.name}</strong></td>
+                                    <td>${col.type}${col.length ? `(${col.length})` : ''}</td>
+                                    <td>${col.length || '-'}</td>
+                                    <td>${col.allow_nulls ? '✅' : '❌'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            
+            previewDiv.style.display = 'block';
+            previewDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function getFormData() {
+            const tableName = document.getElementById('table_name').value.trim();
+            const columns = [];
+            
+            const columnItems = document.querySelectorAll('.column-item');
+            columnItems.forEach(item => {
+                const nameInput = item.querySelector('input[name^="column_name_"]');
+                const typeSelect = item.querySelector('select[name^="column_type_"]');
+                const lengthInput = item.querySelector('input[name^="column_length_"]');
+                const nullableInput = item.querySelector('input[name^="column_nullable_"]');
+                
+                if (nameInput && typeSelect && nameInput.value.trim() && typeSelect.value) {
+                    columns.push({
+                        name: nameInput.value.trim(),
+                        type: typeSelect.value,
+                        length: lengthInput ? lengthInput.value.trim() : '',
+                        allow_nulls: nullableInput ? nullableInput.checked : false
+                    });
+                }
+            });
+            
+            return {
+                table_name: tableName,
+                columns: columns
+            };
+        }
+
+        // Enhanced form validation
+        function validateForm(formData) {
+            const errors = [];
+
+            // Table name validation
+            if (!formData.table_name) {
+                errors.push('Nama tabel harus diisi');
+            } else {
+                const tableValidation = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(formData.table_name);
+                if (!tableValidation) {
+                    errors.push('Nama tabel tidak valid (harus dimulai huruf, hanya huruf/angka/underscore)');
+                }
+                if (/ssot_/i.test(formData.table_name)) {
+                    errors.push('Nama tabel tidak boleh mengandung kata "ssot_"');
+                }
+            }
+
+            // Columns validation
+            if (formData.columns.length === 0) {
+                errors.push('Minimal harus ada satu kolom');
+            }
+
+            // Column names validation
+            const columnNames = [];
+            const reservedColumns = ['id', 'period_date', 'upload_date'];
+
+            formData.columns.forEach((col, index) => {
+                if (!col.name) {
+                    errors.push(`Nama kolom ${index + 1} harus diisi`);
+                } else {
+                    const validFormat = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(col.name);
+                    if (!validFormat) {
+                        errors.push(`Nama kolom "${col.name}" tidak valid (hanya huruf, angka, underscore dan harus diawali huruf)`);
+                    }
+
+                    if (reservedColumns.includes(col.name.toLowerCase())) {
+                        errors.push(`Kolom "${col.name}" tidak boleh digunakan karena sudah otomatis ditambahkan`);
+                    }
+
+                    if (columnNames.includes(col.name.toLowerCase())) {
+                        errors.push(`Nama kolom duplikat: ${col.name}`);
+                    }
+
+                    columnNames.push(col.name.toLowerCase());
+                }
+
+                if (!col.type) {
+                    errors.push(`Tipe data kolom ${index + 1} harus dipilih`);
+                }
+
+                // Validate length for specific data types
+                if (col.type && ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR'].includes(col.type)) {
+                    if (!col.length || parseInt(col.length) < 1 || parseInt(col.length) > 8000) {
+                        errors.push(`Panjang kolom "${col.name}" harus antara 1-8000`);
+                    }
+                }
+
+                if (col.type && ['DECIMAL', 'NUMERIC'].includes(col.type)) {
+                    if (!col.length) {
+                        errors.push(`Precision kolom "${col.name}" harus diisi`);
+                    } else {
+                        const parts = col.length.split(',');
+                        const precision = parseInt(parts[0]);
+                        const scale = parts[1] ? parseInt(parts[1]) : 0;
+
+                        if (precision < 1 || precision > 38) {
+                            errors.push(`Precision kolom "${col.name}" harus antara 1-38`);
+                        }
+                        if (scale < 0 || scale > precision) {
+                            errors.push(`Scale kolom "${col.name}" harus antara 0-${precision}`);
+                        }
+                    }
+                }
+            });
+
+            return errors;
+        }
+
+
+
+        // UNIFIED Form submission handler
+        function initializeFormSubmission() {
+            const form = document.getElementById('createTableForm');
+            if (!form) return;
+
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                // Prevent double submission
+                if (isSubmitting) {
+                    showAlert('warning', 'Sedang memproses, harap tunggu...');
+                    return;
+                }
+                
+                const formData = getFormData();
+                const validationErrors = validateForm(formData);
+                
+                if (validationErrors.length > 0) {
+                    showAlert('error', validationErrors[0]);
+                    return;
+                }
+                
+                // Check table exists before submitting
+                checkTableExistsBeforeSubmit(formData.table_name)
+                    .then(exists => {
+                        if (exists) {
+                            showAlert('error', `Tabel "${formData.table_name}" sudah ada dalam database`);
+                            return;
+                        }
+                        
+                        // Proceed with submission
+                        submitForm(formData);
+                    })
+                    .catch(error => {
+                        console.warn('Could not check table existence, proceeding with submission');
+                        submitForm(formData);
+                    });
+            });
+
+            // Auto-save functionality
+            form.addEventListener('input', function() {
+                clearTimeout(this.saveTimeout);
+                this.saveTimeout = setTimeout(saveDraft, 2000);
+            });
+
+            // Auto-save every 30 seconds
+            setInterval(saveDraft, 30000);
+        }
+
+        // Initialize form submission when DOM is loaded
+        document.addEventListener('DOMContentLoaded', initializeFormSubmission);
+
+        function submitForm(formData) {
+            isSubmitting = true;
+            showLoading(true, 'Membuat tabel database...');
+            hideResult();
+            
+            // Add timeout untuk request
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+            
+            fetch('/create-table', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(formData),
+                signal: controller.signal
+            })
+            .then(response => {
+                clearTimeout(timeoutId);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                showLoading(false);
+                isSubmitting = false;
+                
+                if (data.success) {
+                    const details = createSuccessDetails(data);
+                    showResult('success', 'Tabel Berhasil Dibuat! 🎉', data.message, details);
+                    
+                    // Reset form
+                    document.getElementById('createTableForm').reset();
+                    document.getElementById('columnsContainer').innerHTML = '';
+                    document.getElementById('tableNameCheck').innerHTML = '';
+                    columnCount = 0;
+                    
+                    // Clear draft
+                    clearDraft();
+                    
+                    // Show success alert
+                    showAlert('success', `Tabel "${data.table_name}" berhasil dibuat!`);
+                } else {
+                    showResult('error', 'Gagal Membuat Tabel ❌', data.message);
+                    showAlert('error', data.message);
+                }
+            })
+            .catch(error => {
+                clearTimeout(timeoutId);
+                showLoading(false);
+                isSubmitting = false;
+                
+                let errorMessage = 'Terjadi kesalahan tidak terduga';
+                
+                if (error.name === 'AbortError') {
+                    errorMessage = 'Request timeout - silakan coba lagi';
+                } else if (error.message) {
+                    errorMessage = error.message;
+                }
+                
+                showResult('error', 'Terjadi Kesalahan ❌', errorMessage);
+                showAlert('error', 'Terjadi kesalahan: ' + errorMessage);
+            });
+        }
+
+        function createSuccessDetails(data) {
+            let details = '<table style="width: 100%; margin-top: 15px;">';
+            details += `<tr><th style="width: 40%;">Nama Tabel</th><td><strong>${data.table_name}</strong></td></tr>`;
+            details += `<tr><th>Jumlah Kolom</th><td><strong>${data.columns_created + 1}</strong> (termasuk ID)</td></tr>`;
+            details += '</table>';
+            
+            if (data.query) {
+                details += '<div style="margin-top: 20px;">';
+                details += '<h5 style="margin-bottom: 10px; color: #374151;">📋 Query SQL yang Dieksekusi:</h5>';
+                details += `<pre style="background: #f8fafc; padding: 15px; border-radius: 6px; overflow-x: auto; font-size: 0.875rem;"><code>${data.query}</code></pre>`;
+                details += '</div>';
+            }
+            
+            return details;
+        }
+
+        function showLoading(show, message = 'Memproses...') {
+            const loading = document.getElementById('loading');
+            const loadingText = loading.querySelector('p');
+            const submitButton = document.querySelector('button[type="submit"]');
+            const previewButton = document.querySelector('button[onclick="previewTable()"]');
+            
+            if (show) {
+                loading.style.display = 'block';
+                loadingText.textContent = message;
+                
+                // Disable all buttons
+                if (submitButton) {
+                    submitButton.disabled = true;
+                    submitButton.style.opacity = '0.6';
+                    submitButton.style.cursor = 'not-allowed';
+                    submitButton.innerHTML = '<span>⏳</span> Membuat Tabel...';
+                }
+                
+                if (previewButton) {
+                    previewButton.disabled = true;
+                    previewButton.style.opacity = '0.6';
+                    previewButton.style.cursor = 'not-allowed';
+                }
+            } else {
+                loading.style.display = 'none';
+                
+                // Re-enable buttons
+                if (submitButton) {
+                    submitButton.disabled = false;
+                    submitButton.style.opacity = '1';
+                    submitButton.style.cursor = 'pointer';
+                    submitButton.innerHTML = '<span>🗃️</span> Buat Tabel';
+                }
+                
+                if (previewButton) {
+                    previewButton.disabled = false;
+                    previewButton.style.opacity = '1';
+                    previewButton.style.cursor = 'pointer';
+                }
+            }
+        }
+
+        function showResult(type, title, message, details = '') {
+            const result = document.getElementById('result');
+            const resultTitle = document.getElementById('resultTitle');
+            const resultMessage = document.getElementById('resultMessage');
+            const resultDetails = document.getElementById('resultDetails');
+            
+            result.className = `result ${type}`;
+            result.style.display = 'block';
+            resultTitle.innerHTML = title;
+            resultMessage.innerHTML = message;
+            resultDetails.innerHTML = details;
+            
+            result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function hideResult() {
+            const result = document.getElementById('result');
+            const previewResult = document.getElementById('previewResult');
+            result.style.display = 'none';
+            previewResult.style.display = 'none';
+        }
+
+        function showAlert(type, message) {
+            // Remove existing alerts
+            $('.alert').remove();
+            
+            const alertClass = type === 'success' ? 'alert-success' : 'alert-danger';
+            const alertIcon = type === 'success' ? '✅' : '❌';
+            
+            const alert = $(`
+                <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+                    ${alertIcon} ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `);
+            
+            // Insert alert at the top of the main content
+            $('.main-content').prepend(alert);
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                alert.alert('close');
+            }, 5000);
+        }
+
+        function hideAlert() {
+            const alert = document.getElementById('alert');
+            if (alert) {
+                alert.style.opacity = '0';
+                alert.style.transform = 'translateX(400px)';
+                setTimeout(() => {
+                    if (alert.parentNode) {
+                        alert.parentNode.removeChild(alert);
+                    }
+                }, 300);
+            }
+        }
+
+        // Add tooltips for better UX
+        function addTooltips() {
+            const tooltips = {
+                'table_name': 'Nama tabel harus unik dan mengikuti aturan penamaan SQL Server',
+                'column_type': 'Pilih tipe data yang sesuai dengan jenis data yang akan disimpan',
+                'column_length': 'Panjang maksimum untuk tipe data yang mendukung panjang variabel'
+            };
+            
+            Object.keys(tooltips).forEach(id => {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.setAttribute('title', tooltips[id]);
+                }
+            });
+        }
+
+        // Add keyboard shortcuts
+        function addKeyboardShortcuts() {
+            document.addEventListener('keydown', function(e) {
+                // Ctrl/Cmd + Enter to preview
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    previewTable();
+                }
+                
+                // Ctrl/Cmd + Shift + Enter to submit
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Enter') {
+                    e.preventDefault();
+                    const form = document.getElementById('createTableForm');
+                    if (form) {
+                        form.dispatchEvent(new Event('submit'));
+                    }
+                }
+                
+                // Ctrl/Cmd + + to add column
+                if ((e.ctrlKey || e.metaKey) && e.key === '=') {
+                    e.preventDefault();
+                    addColumn();
+                }
+            });
+        }
+
+        // Auto-save draft functionality (using sessionStorage for temporary storage)
+        function saveDraft() {
+            const formData = getFormData();
+            if (formData.table_name || formData.columns.length > 0) {
+                try {
+                    sessionStorage.setItem('createTableDraft', JSON.stringify(formData));
+                } catch (e) {
+                    console.warn('Could not save draft:', e);
+                }
+            }
+        }
+
+        function loadDraft() {
+            try {
+                const draft = sessionStorage.getItem('createTableDraft');
+                if (draft) {
+                    const formData = JSON.parse(draft);
+                    
+                    // Load table name
+                    if (formData.table_name) {
+                        document.getElementById('table_name').value = formData.table_name;
+                    }
+                    
+                    // Load columns
+                    if (formData.columns && formData.columns.length > 0) {
+                        // Clear existing columns
+                        document.getElementById('columnsContainer').innerHTML = '';
+                        columnCount = 0;
+                        
+                        // Add columns from draft
+                        formData.columns.forEach(col => {
+                            addColumn();
+                            const currentColumn = columnCount;
+                            
+                            setTimeout(() => {
+                                const nameInput = document.querySelector(`input[name="column_name_${currentColumn}"]`);
+                                const typeSelect = document.querySelector(`select[name="column_type_${currentColumn}"]`);
+                                const lengthInput = document.querySelector(`input[name="column_length_${currentColumn}"]`);
+                                const nullableInput = document.querySelector(`input[name="column_nullable_${currentColumn}"]`);
+                                
+                                if (nameInput) nameInput.value = col.name;
+                                if (typeSelect) typeSelect.value = col.type;
+                                if (lengthInput) lengthInput.value = col.length;
+                                if (nullableInput) nullableInput.checked = col.allow_nulls;
+                                
+                                // Trigger change event to update length field
+                                if (typeSelect) {
+                                    toggleLengthField(currentColumn);
+                                }
+                            }, 100);
+                        });
+                        
+                        showAlert('info', 'Draft formulir dimuat dari sesi sebelumnya');
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not load draft:', e);
+            }
+        }
+
+        function initializeDataTables() {
+            tablesDataTable = $('#tablesDataTable').DataTable({
+                responsive: true,
+                processing: true,
+                serverSide: false,
+                pageLength: 10,
+                order: [[2, 'desc']], // Sort by created date descending
+                columnDefs: [
+                    { 
+                        targets: [3], // Actions column
+                        orderable: false,
+                        searchable: false,
+                        width: '150px'
+                    }
+                ],
+                language: {
+                    emptyTable: "No tables or templates found",
+                    processing: "Loading tables...",
+                    search: "Search tables:",
+                    lengthMenu: "Show _MENU_ tables per page",
+                    info: "Showing _START_ to _END_ of _TOTAL_ tables",
+                    paginate: {
+                        first: "First",
+                        last: "Last",
+                        next: "Next",
+                        previous: "Previous"
+                    }
+                }
+            });
+        }
+
+        function loadExistingTables() {
+            fetch('/get-existing-tables')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        populateTablesDataTable(data.tables);
+                    } else {
+                        console.error('Failed to load tables:', data.message);
+                        showAlert('error', 'Failed to load existing tables');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading tables:', error);
+                    showAlert('error', 'Error loading existing tables');
+                });
+        }
+
+        function populateTablesDataTable(tables) {
+            if (!tablesDataTable) {
+                console.error('tablesDataTable is not initialized');
+                return;
+            }
+
+            tablesDataTable.clear();
+            
+            tables.forEach(table => {
+                const actions = `
+                    <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-danger btn-sm" 
+                                onclick="deleteTable('${table.name}')" 
+                                title="Delete ${table.type}">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                `;
+                
+                tablesDataTable.row.add([
+                    table.name,
+                    table.division || 'N/A',
+                    table.create_date || 'N/A',
+                    actions
+                ]);
+            });
+            
+            tablesDataTable.draw();
+        }
+
+        function editTable(tableName) {
+            // Show loading state
+            document.getElementById('editTableModalLabel').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+            
+            // Fetch table details
+            fetch(`/get-table-details/${tableName}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        populateEditModal(data.table);
+                        // Show modal
+                        const modal = new bootstrap.Modal(document.getElementById('editTableModal'));
+                        modal.show();
+                    } else {
+                        showAlert('error', 'Failed to load table details: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading table details:', error);
+                    showAlert('error', 'Error loading table details');
+                })
+                .finally(() => {
+                    document.getElementById('editTableModalLabel').innerHTML = '<i class="fas fa-edit"></i> Edit Table/Template';
+                });
+        }
+
+        function populateEditModal(table) {
+            document.getElementById('edit_table_id').value = table.name;
+            document.getElementById('edit_table_name').value = table.name;
+            
+            // Clear existing columns
+            const container = document.getElementById('editColumnsContainer');
+            container.innerHTML = '';
+            editColumnCount = 0;
+            
+            // Add existing columns
+            if (table.columns && table.columns.length > 0) {
+                const excludedColumns = ['period_date', 'upload_date', 'id'];
+                table.columns
+                    .filter(column => !excludedColumns.includes(column.name.toLowerCase()))
+                    .forEach(column => {
+                        addEditColumn(column);
+                    });
+            }
+        }
+
+        function addEditColumn() {
+            editColumnCount++;
+            const container = document.getElementById('editColumnsContainer');
+            
+            const columnDiv = document.createElement('div');
+            columnDiv.className = 'row mb-2';
+            columnDiv.innerHTML = `
+                <div class="col-md-4">
+                    <input type="text" class="form-control form-control-sm" 
+                        placeholder="Column Name" required>
+                </div>
+                <div class="col-md-3">
+                    <select class="form-control form-control-sm" required>
+                        <option value="">-- Type --</option>
+                        <option value="VARCHAR">VARCHAR</option>
+                        <option value="INT">INT</option>
+                        <option value="DECIMAL">DECIMAL</option>
+                        <option value="DATE">DATE</option>
+                        <option value="DATETIME">DATETIME</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <input type="text" class="form-control form-control-sm" 
+                        placeholder="Length">
+                </div>
+                <div class="col-md-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox">
+                        <label class="form-check-label">NULL</label>
+                    </div>
+                </div>
+                <div class="col-md-1">
+                    <button type="button" class="btn btn-danger btn-sm" 
+                            onclick="removeEditColumn(this)">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            `;
+            
+            container.appendChild(columnDiv);
+        }
+
+        function removeEditColumn(button) {
+            button.closest('.row').remove();
+        }
+
+        function toggleEditLengthField(columnId) {
+            const typeSelect = document.querySelector(`select[name="edit_column_type_${columnId}"]`);
+            const lengthInput = document.querySelector(`input[name="edit_column_length_${columnId}"]`);
+            
+            if (typeSelect && lengthInput) {
+                const selectedOption = typeSelect.options[typeSelect.selectedIndex];
+                const hasLength = selectedOption.getAttribute('data-has-length') === 'true';
+                
+                lengthInput.disabled = !hasLength;
+                lengthInput.required = hasLength;
+                
+                if (!hasLength) {
+                    lengthInput.value = '';
+                }
+            }
+        }
+
+        function saveTableChanges() {
+            const tableName = document.getElementById('edit_table_name').value.trim();
+            const rows = document.querySelectorAll('#editColumnsContainer .row');
+            const columns = [];
+
+            if (!tableName) {
+                showAlert('error', 'Nama tabel harus diisi');
+                return;
+            }
+
+            rows.forEach(row => {
+                const inputs = row.querySelectorAll('input, select');
+                const name = inputs[0].value.trim();
+                const type = inputs[1].value;
+                const length = inputs[2].value.trim();
+                const allowNulls = inputs[3].checked;
+
+                if (!name || !type) return;
+
+                const columnData = {
+                    name: name,
+                    type: type,
+                    length: length || null,
+                    allow_nulls: allowNulls
+                };
+
+                columns.push(columnData);
+            });
+
+            if (columns.length === 0) {
+                showAlert('error', 'Minimal harus ada satu kolom yang valid untuk disimpan');
+                return;
+            }
+
+            const payload = {
+                table_name: tableName,
+                columns: columns
+            };
+
+            fetch('/update-table', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('success', 'Perubahan tabel berhasil disimpan!');
+                    loadExistingTables();
+
+                    // Tutup modal jika ada
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('editTableModal'));
+                    if (modal) modal.hide();
+                } else {
+                    showAlert('error', 'Gagal menyimpan perubahan: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error updating table:', error);
+                showAlert('error', 'Terjadi kesalahan saat menyimpan perubahan');
+            });
+        }
+
+
+        function getEditFormData() {
+            const tableName = document.getElementById('edit_table_name').value.trim();
+            const originalTableName = document.getElementById('edit_table_id').value;
+            const columns = [];
+            
+            const columnItems = document.querySelectorAll('.edit-column-item');
+            columnItems.forEach(item => {
+                const nameInput = item.querySelector('input[name^="edit_column_name_"]');
+                const typeSelect = item.querySelector('select[name^="edit_column_type_"]');
+                const lengthInput = item.querySelector('input[name^="edit_column_length_"]');
+                const nullableInput = item.querySelector('input[name^="edit_column_nullable_"]');
+                
+                if (nameInput && typeSelect && nameInput.value.trim() && typeSelect.value) {
+                    columns.push({
+                        name: nameInput.value.trim(),
+                        type: typeSelect.value,
+                        length: lengthInput ? lengthInput.value.trim() : '',
+                        nullable: nullableInput ? nullableInput.checked : false
+                    });
+                }
+            });
+            
+            return {
+                original_table_name: originalTableName,
+                table_name: tableName,
+                columns: columns
+            };
+        }
+
+        function validateEditForm(formData) {
+            if (!formData.table_name) {
+                showAlert('error', 'Table name is required');
+                return false;
+            }
+            
+            if (formData.columns.length === 0) {
+                showAlert('error', 'At least one column is required');
+                return false;
+            }
+            
+            // Additional validation logic can be added here
+            return true;
+        }
+
+        function deleteTable(tableName) {
+            currentTableToDelete = tableName;
+            
+            // Update modal content
+            document.getElementById('deleteTableName').textContent = tableName;
+            
+            // Show confirmation modal
+            const modal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+            modal.show();
+        }
+
+        function confirmDelete() {
+            if (!currentTableToDelete) {
+                showAlert('error', 'No table selected for deletion');
+                return;
+            }
+            
+            fetch('/delete-table', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ table_name: currentTableToDelete })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('success', data.message);
+                    loadExistingTables(); // Reload the table list
+                    
+                    // Hide modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('deleteConfirmModal'));
+                    modal.hide();
+                } else {
+                    showAlert('error', 'Gagal menghapus: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error deleting table:', error);
+                showAlert('error', 'Terjadi kesalahan saat menghapus table');
+            })
+            .finally(() => {
+                currentTableToDelete = null;
+            });
+        }
+
+        // Auto-save every 30 seconds
+        setInterval(saveDraft, 30000);
+
+        // Refresh tables data periodically
+        setInterval(loadExistingTables, 300000);
+
+        // Save draft when form changes
+        document.getElementById('createTableForm').addEventListener('input', function() {
+            clearTimeout(this.saveTimeout);
+            this.saveTimeout = setTimeout(saveDraft, 2000);
+        });
+
+        // Clear draft after successful submission
+        function clearDraft() {
+            try {
+                sessionStorage.removeItem('createTableDraft');
+            } catch (e) {
+                console.warn('Could not clear draft:', e);
+            }
+        }
+    </script>
+{% endblock %}
