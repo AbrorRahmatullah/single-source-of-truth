@@ -1,6 +1,6 @@
 {% extends "header.html" %}
 
-{% block title %}Create Table{% endblock %}
+{% block title %}Create Template{% endblock %}
 
 {% block content %}
     <!-- Sidebar -->
@@ -11,15 +11,15 @@
         <!-- Content -->
         <div class="content">
             <div class="content-header">
-                <h2 class="content-title">Create Database Table</h2>
-                <p class="content-subtitle">Create new tables in SQL Server database with custom columns and data types</p>
+                <h2 class="content-title">Create Database Template</h2>
+                <p class="content-subtitle">Create new tables (templates) in SQL Server database with custom columns and data types</p>
             </div>
 
             <div class="card">
                 <div class="card-header">
                     <h3 class="card-title">
                         <span>🗃️</span>
-                        Table Configuration
+                        Template Management
                     </h3>
                 </div>
                 <div class="card-body">
@@ -27,7 +27,7 @@
                         <h3>ℹ️ Informasi Penting</h3>
                         <ul>
                             <li><strong>ID Column:</strong> Kolom ID (Primary Key) akan otomatis ditambahkan</li>
-                            <li><strong>Table Name:</strong> Hanya huruf, angka, dan underscore. Dimulai dengan huruf</li>
+                            <li><strong>Template Name:</strong> Hanya huruf, angka, dan underscore. Dimulai dengan huruf</li>
                             <li><strong>Column Length:</strong> Untuk VARCHAR/CHAR (1-8000), untuk DECIMAL (precision atau precision,scale)</li>
                             <li><strong>Data Types:</strong> Pilih tipe data sesuai kebutuhan kolom</li>
                         </ul>
@@ -36,10 +36,10 @@
                     <form id="createTableForm">
                         <div class="grid-container">
                             <div class="form-group">
-                                <label for="table_name" class="form-label">Nama Tabel</label>
+                                <label for="table_name" class="form-label">Nama Template</label>
                                 <input type="text" id="table_name" name="table_name" class="form-control" 
                                     placeholder="Contoh: employee_data, customer_template" required>
-                                <div class="form-text">Nama tabel harus dimulai dengan huruf dan hanya boleh mengandung huruf, angka, dan underscore</div>
+                                <div class="form-text">Nama Template harus dimulai dengan huruf dan hanya boleh mengandung huruf, angka, dan underscore</div>
                                 <div id="tableNameCheck" class="form-text"></div>
                             </div>
                             <div class="form-group">
@@ -51,7 +51,7 @@
                                 <label for="divisions" class="form-label">Divisi</label>
                                 {% if session.role_access == 'admin' %}
                                     <select id="divisions" name="divisions" class="form-control form-select" required>
-                                        <option value="">-- Pilih Tabel Template --</option>
+                                        <option value="">-- Pilih Template --</option>
                                         {% for division in divisions %}
                                         <option value="{{ division }}">{{division}}</option>
                                         {% endfor %}
@@ -70,7 +70,7 @@
 
                     <div class="loading" id="loading">
                         <div class="spinner"></div>
-                        <p>Membuat tabel database...</p>
+                        <p>Membuat template database...</p>
                     </div>
 
                     <div class="result" id="result">
@@ -90,7 +90,7 @@
                 <div class="card-header">
                     <h3 class="card-title">
                         <span>📊</span>
-                        Existing Tables & Templates
+                        Existing Templates
                     </h3>
                 </div>
                 <div class="card-body">
@@ -98,7 +98,7 @@
                         <table id="tablesDataTable" class="table table-striped table-bordered" style="width:100%">
                             <thead>
                                 <tr>
-                                    <th>Table Name</th>
+                                    <th>Template Name</th>
                                     <th>Division</th> <!-- ubah dari Column Count -->
                                     <th>Create Date</th>
                                     <th>Actions</th>
@@ -430,10 +430,10 @@
             const templateData = {
                 table_name: tableName,
                 columns: columns,
-                division: division
+                divisions: division
             };
 
-            fetch('/save-as-template', {
+            fetch('/create-table', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

@@ -1484,7 +1484,38 @@ def create_table():
                     col_def += " NOT NULL"
                 else:
                     col_def += " NULL"
-                
+                    
+                default_value = col.get('default_value', None)
+                if default_value not in [None, '']:
+                    if col_type.upper() in ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR', 'TEXT']:
+                        # ✅ Properly escape single quotes and wrap with quotes
+                        escaped_value = default_value.replace("'", "''")
+                        col_def += f" DEFAULT '{escaped_value}'"
+                    elif col_type.upper() in ['BIT']:
+                        if default_value not in ['0', '1']:
+                            return jsonify({'success': False, 'message': f'Default value tidak valid untuk kolom "{col_name}" bertipe BIT'})
+                        col_def += f" DEFAULT {default_value}"
+                    elif col_type.upper() in ['DATE', 'DATETIME']:
+                        # Handle special datetime functions
+                        if default_value.upper() in ['GETDATE()', 'GETUTCDATE()', 'SYSDATETIME()']:
+                            col_def += f" DEFAULT {default_value.upper()}"
+                        else:
+                            # Treat as date string
+                            escaped_value = default_value.replace("'", "''")
+                            col_def += f" DEFAULT '{escaped_value}'"
+                    elif col_type.upper() in ['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'NUMERIC', 'FLOAT', 'REAL']:
+                        # Numeric types - validate that it's a number
+                        try:
+                            # Try to convert to float to validate it's numeric
+                            float(default_value)
+                            col_def += f" DEFAULT {default_value}"
+                        except ValueError:
+                            return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" harus berupa angka'})
+                    else:
+                        # For other types, wrap in quotes as string
+                        escaped_value = default_value.replace("'", "''")
+                        col_def += f" DEFAULT '{escaped_value}'"
+
                 column_definitions.append(col_def)
             
             # Add automatic columns
@@ -1500,7 +1531,7 @@ def create_table():
             try:
                 
                 cursor.execute("""
-                    INSERT INTO ssot_creator (template_name, division_name, created_date, created_by)
+                    INSERT INTO ssot_creator (template_name, division_name, create_date, create_by)
                     VALUES (?, ?, GETDATE(), ?)
                 """, (table_name, divisions, username))
                 
@@ -2501,7 +2532,7 @@ def save_as_template():
             
             # Save template metadata
             cursor.execute("""
-                INSERT INTO ssot_creator (template_name, division_name, created_date, created_by)
+                INSERT INTO ssot_creator (template_name, division_name, create_date, create_by)
                 VALUES (?, ?, GETDATE(), ?)
             """, (table_name, division, username))
             
