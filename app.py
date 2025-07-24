@@ -763,6 +763,26 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
         logger.error(f"Error processing Excel file: {str(e)}")
         raise
 
+def normalize_value(value, dtype=None):
+    """
+    Normalisasi nilai untuk insert ke SQL Server:
+    - 'N/A', '', 'None', NaN => None (kecuali int/float => 0)
+    - '-' => 0 jika int/float, else None
+    """
+    cleaned = str(value).strip().upper()
+
+    if pd.isna(value) or cleaned in ['N/A', '', 'NONE']:
+        if dtype and ('int' in dtype or 'float' in dtype):
+            return 0
+        return None
+
+    if cleaned == '-':
+        if dtype and ('int' in dtype or 'float' in dtype):
+            return 0
+        return None
+
+    return value
+
 def insert_to_database(df, table_name, periode_date=None, replace_existing=True):
 
     """
@@ -803,7 +823,9 @@ def insert_to_database(df, table_name, periode_date=None, replace_existing=True)
 
             # Ambil nilai yang sudah tervalidasi dan terkonversi untuk kolom data
             for col in df.columns:
-                value = row[col]
+                raw_value = row[col]
+                dtype = str(df[col].dtype)
+                value = normalize_value(raw_value, dtype)
                 row_data.append(value)
             
             # Add automatic column values
@@ -1443,7 +1465,7 @@ def create_table():
                     return jsonify({'success': False, 'message': 'Semua kolom harus memiliki nama'})
                 
                 # Validate column name
-                if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', col_name):
+                if not re.match(r'^[a-zA-Z][a-zA-Z0-9_ /()\-\.\%]*$', col_name):
                     return jsonify({'success': False, 'message': f'Nama kolom "{col_name}" tidak valid. Hanya boleh huruf, angka, dan underscore.'})
                 
                 # Build column definition
