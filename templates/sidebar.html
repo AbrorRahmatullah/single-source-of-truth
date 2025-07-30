@@ -1,0 +1,39 @@
+<!-- templates/sidebar.html -->
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h1>SSOT</h1>
+    </div>
+    <nav class="sidebar-menu">
+        <!--<a href="#" class="menu-item">
+            <div class="menu-item-icon">📊</div>
+            Dashboard
+        </a> -->
+        
+        <!-- Upload - Accessible to both admin and user -->
+        <a href="/upload" class="menu-item">
+            <div class="menu-item-icon">📤</div>
+            Upload
+        </a>
+        
+        <!-- Admin-only menu items -->
+        {% if session.role_access == 'admin' %}
+        <a href="/create-table" class="menu-item">
+            <div class="menu-item-icon">📊</div>
+            Template Management
+        </a>
+        <a href="/divisions-page" class="menu-item">
+            <div class="menu-item-icon">📋</div>
+            Divisions Management
+        </a>
+        {% endif %}
+        
+        <!--<a href="#" class="menu-item">
+            <div class="menu-item-icon">📦</div>
+            Product
+        </a>
+        <a href="#" class="menu-item">
+            <div class="menu-item-icon">🎯</div>
+            Offer
+        </a> -->
+    </nav>
+</div>

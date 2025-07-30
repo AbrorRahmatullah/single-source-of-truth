@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Excel Upload - Single Source of Truth{% endblock %}</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/styles.css') }}" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <h1 class="header-title"></h1>
+        <div class="header-actions">
+            <div class="user-dropdown" id="userDropdown">
+                <div class="user-info" id="userInfo">
+                    <div class="card-title-icon">👤</div>
+                    <span id="fullname">{{ fullname }}</span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                </div>
+                <div class="dropdown-content">
+                    <a href="/change_password">Change Password</a>
+                    {% if role_access == 'admin' %}
+                        <a href="/register">Register User</a>
+                    {% endif %}
+                    <a href="/logout">Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const dropdown = document.getElementById('userDropdown');
+            const trigger = document.getElementById('userInfo');
+
+            trigger.addEventListener('click', function (e) {
+                e.stopPropagation();
+                dropdown.classList.toggle('active');
+            });
+
+            // Klik di luar dropdown akan menutupnya
+            document.addEventListener('click', function (e) {
+                if (!dropdown.contains(e.target)) {
+                    dropdown.classList.remove('active');
+                }
+            });
+        });
+    </script>
+
+    {% block content %}{% endblock %}
+
+</body>
+</html>
