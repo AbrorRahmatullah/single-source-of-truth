@@ -9,6 +9,7 @@ import logging
 
 from flask import Flask, flash, make_response, request, render_template, jsonify, redirect, session, url_for
 from functools import wraps
+from waitress import serve
 from werkzeug.utils import secure_filename
 from datetime import datetime, time, date
 from flask_bcrypt import Bcrypt
@@ -922,7 +923,7 @@ def get_master_divisions_tables():
         
         cursor.execute("""
             SELECT division_name 
-            FROM ssot_divisions
+            FROM MasterDivisions
         """)
         
         tables = cursor.fetchall()
@@ -1049,10 +1050,10 @@ def get_excel_sheets(file_path):
         logger.error(f"Error reading Excel sheets: {str(e)}")
         return None
 
-def insert_to_ssot_uploader(conn, username, division, template, sheets, file_upload, period_date, upload_date):
+def insert_to_MasterUploader(conn, username, division, template, sheets, file_upload, period_date, upload_date):
     cursor = conn.cursor()
     insert_query = """
-        INSERT INTO ssot_uploader (username, division, template, sheets, file_upload, period_date, upload_date)
+        INSERT INTO MasterUploader (username, division, template, sheets, file_upload, period_date, upload_date)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """
     cursor.execute(insert_query, (username, division, template, sheets, file_upload, period_date, upload_date))
@@ -1066,7 +1067,7 @@ def register():
     cur = conn.cursor()
 
     # Ambil daftar divisi dari tabel divisions
-    cur.execute("SELECT division_name FROM ssot_divisions")
+    cur.execute("SELECT division_name FROM MasterDivisions")
     division_rows = cur.fetchall()
     divisions = [row[0] for row in division_rows]
 
@@ -1091,18 +1092,18 @@ def register():
 
         password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
 
-        cur.execute("SELECT * FROM ssot_users WHERE username = ?", (username,))
+        cur.execute("SELECT * FROM MasterUsers WHERE username = ?", (username,))
         existing_user = cur.fetchone()
         if existing_user:
             return render_alert("Username already exists.", 'register', username, fullname, email, role_access, divisions=divisions)
 
-        cur.execute("SELECT * FROM ssot_users WHERE email = ?", (email,))
+        cur.execute("SELECT * FROM MasterUsers WHERE email = ?", (email,))
         existing_email = cur.fetchone()
         if existing_email:
             return render_alert("Email is already registered.", 'register', username, fullname, email, role_access, divisions=divisions)
 
         cur.execute("""
-            INSERT INTO ssot_users (username, password_hash, role_access, fullname, email, division, created_date)
+            INSERT INTO MasterUsers (username, password_hash, role_access, fullname, email, division, created_date)
             VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (username, password_hash, role_access, fullname, email, division, created_date))
         conn.commit()
@@ -1125,7 +1126,7 @@ def login():
         conn = get_db_connection()
         cur = conn.cursor()
         
-        cur.execute("SELECT password_hash, role_access, division, fullname FROM ssot_users WHERE username = ?", (username,))
+        cur.execute("SELECT password_hash, role_access, division, fullname FROM MasterUsers WHERE username = ?", (username,))
         user = cur.fetchone()
 
         if user and bcrypt.check_password_hash(user[0], password):
@@ -1213,10 +1214,10 @@ def upload_file():
             # Proses file
             result = process_excel_file(file_path, table_name, primary_header, sheet_name, periode_date)
             
-            # Simpan ke tabel ssot_uploader
+            # Simpan ke tabel MasterUploader
             try:
                 conn = get_db_connection()  # pastikan Anda punya fungsi koneksi ini
-                insert_to_ssot_uploader(
+                insert_to_MasterUploader(
                     conn=conn,
                     username=session.get('username'),
                     division=session.get('division'),
@@ -1228,7 +1229,7 @@ def upload_file():
                 )
                 conn.close()
             except Exception as e:
-                logger.error(f"Gagal insert ke ssot_uploader: {str(e)}")
+                logger.error(f"Gagal insert ke MasterUploader: {str(e)}")
             
             return jsonify(result)
         
@@ -1553,7 +1554,7 @@ def create_table():
             try:
                 
                 cursor.execute("""
-                    INSERT INTO ssot_creator (template_name, division_name, create_date, create_by)
+                    INSERT INTO MasterCreator (template_name, division_name, create_date, create_by)
                     VALUES (?, ?, GETDATE(), ?)
                 """, (table_name, divisions, username))
                 
@@ -1800,7 +1801,7 @@ def delete_table():
         try:
             # Check if it's a template first
             cursor.execute("""
-                SELECT COUNT(*) FROM ssot_creator 
+                SELECT COUNT(*) FROM MasterCreator 
                 WHERE template_name = ?
             """, (table_name,))
             
@@ -1809,7 +1810,7 @@ def delete_table():
             if is_template:
                 # Delete from template table
                 cursor.execute("""
-                    DELETE FROM ssot_creator 
+                    DELETE FROM MasterCreator 
                     WHERE template_name = ?
                 """, (table_name,))
                 
@@ -1895,7 +1896,7 @@ def get_divisions():
         cursor.execute("""
             SELECT id, division_name, created_by, 
                    CONVERT(VARCHAR(19), created_date, 120) as created_date
-            FROM ssot_divisions
+            FROM MasterDivisions
             ORDER BY created_date DESC
         """)
         
@@ -1931,7 +1932,7 @@ def create_division():
         
         # Check if division name already exists
         cursor.execute("""
-            SELECT COUNT(*) FROM ssot_divisions 
+            SELECT COUNT(*) FROM MasterDivisions 
             WHERE LOWER(division_name) = LOWER(?)
         """, (division_name,))
         
@@ -1940,7 +1941,7 @@ def create_division():
 
         # Insert new division
         cursor.execute("""
-            INSERT INTO ssot_divisions (division_name, created_by, created_date)
+            INSERT INTO MasterDivisions (division_name, created_by, created_date)
             VALUES (?, ?, GETDATE())
         """, (division_name, created_by))
         
@@ -1965,7 +1966,7 @@ def delete_division(division_id):
         cursor = conn.cursor()
         
         # Get division name before deletion
-        cursor.execute("SELECT division_name FROM ssot_divisions WHERE id = ?", (division_id,))
+        cursor.execute("SELECT division_name FROM MasterDivisions WHERE id = ?", (division_id,))
         result = cursor.fetchone()
         
         if not result:
@@ -1974,7 +1975,7 @@ def delete_division(division_id):
         division_name = result[0]
         
         # Delete the division
-        cursor.execute("DELETE FROM ssot_divisions WHERE id = ?", (division_id,))
+        cursor.execute("DELETE FROM MasterDivisions WHERE id = ?", (division_id,))
         conn.commit()
         
         return jsonify({'success': True, 'message': f'Division "{division_name}" deleted successfully'})
@@ -2070,14 +2071,14 @@ def get_existing_tables():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Ambil hanya data template dari ssot_creator
+        # Ambil hanya data template dari MasterCreator
         cursor.execute("""
             SELECT 
                 template_name,
                 division_name,
                 create_date,
                 create_by
-            FROM ssot_creator
+            FROM MasterCreator
             ORDER BY create_date DESC
         """)
         templates = cursor.fetchall()
@@ -2545,7 +2546,7 @@ def save_as_template():
         try:
             # Check if template already exists
             cursor.execute("""
-                SELECT COUNT(*) FROM ssot_creator 
+                SELECT COUNT(*) FROM MasterCreator 
                 WHERE template_name = ?
             """, (table_name,))
             
@@ -2554,7 +2555,7 @@ def save_as_template():
             
             # Save template metadata
             cursor.execute("""
-                INSERT INTO ssot_creator (template_name, division_name, create_date, create_by)
+                INSERT INTO MasterCreator (template_name, division_name, create_date, create_by)
                 VALUES (?, ?, GETDATE(), ?)
             """, (table_name, division, username))
             
