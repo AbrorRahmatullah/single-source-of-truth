@@ -11,7 +11,7 @@ from flask import Flask, flash, make_response, request, render_template, jsonify
 from functools import wraps
 from waitress import serve
 from werkzeug.utils import secure_filename
-from datetime import datetime, time, date
+from datetime import datetime, time, date, timedelta
 from flask_bcrypt import Bcrypt
 from app.config import get_db_connection
 
@@ -20,6 +20,9 @@ app.config['UPLOAD_FOLDER'] = 'uploads'
 app.secret_key = 'rahasiayangsangatrahasia'  # Ganti dengan secret key yang kuat
 bcrypt = Bcrypt(app)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Set session lifetime to 30 minutes
+app.permanent_session_lifetime = timedelta(minutes=30)
 
 # Pastikan folder upload ada
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
