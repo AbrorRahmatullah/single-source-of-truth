@@ -124,16 +124,48 @@
 
         // Initialize DataTables
         function initializeDataTables() {
-            dataTable = $('#tablesDataTable').DataTable({
-                pageLength: 10,
-                order: [[2, 'desc']], // Sort by created date descending
-                responsive: true,
-                language: {
-                    emptyTable: "No divisions found",
-                    processing: "Loading divisions...",
-                    search: "Search divisions:"
-                }
-            });
+            if (!document.getElementById('tablesDataTable')) {
+                console.error('tablesDataTable element not found');
+                return;
+            }
+
+            // Destroy existing DataTable if it exists
+            if ($.fn.DataTable.isDataTable('#tablesDataTable')) {
+                $('#tablesDataTable').DataTable().destroy();
+            }
+
+            try {
+                dataTable = $('#tablesDataTable').DataTable({
+                    pageLength: 10,
+                    order: [[2, 'desc']], // Sort by created date descending
+                    responsive: true,
+                    columnDefs: [
+                        { 
+                            targets: [3], // Actions column
+                            orderable: false,
+                            searchable: false,
+                            width: '150px'
+                        }
+                    ],
+                    language: {
+                        emptyTable: "Tidak ada divisi yang ditemukan",
+                        processing: "Memuat divisi...",
+                        search: "Cari divisi:",
+                        lengthMenu: "Tampilkan _MENU_ divisi per halaman",
+                        info: "Menampilkan _START_ sampai _END_ dari _TOTAL_ divisi",
+                        paginate: {
+                            first: "Pertama",
+                            last: "Terakhir",
+                            next: "Selanjutnya", 
+                            previous: "Sebelumnya"
+                        }
+                    }
+                });
+                
+                console.log('DataTable initialized successfully');
+            } catch (error) {
+                console.error('DataTables initialization failed:', error);
+            }
         }
 
         // Show create division modal
@@ -158,13 +190,13 @@
             
             const divisionName = document.getElementById('division_name').value.trim();
             if (!divisionName) {
-                showAlert('warning', 'Division name is required.');
+                showAlert('error', 'Nama divisi harus diisi');
                 return;
             }
 
             const submitButton = this.querySelector('button[type="submit"]');
             submitButton.disabled = true;
-            submitButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
+            submitButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Membuat...';
 
             fetch('/divisions', {
                 method: 'POST',
@@ -176,16 +208,24 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showAlert('success', data.message);
+                    // Hide create modal
                     bootstrap.Modal.getInstance(document.getElementById('createDivisionModal')).hide();
-                    loadExistingDivisions();
+                    
+                    // Show success modal instead of flash alert
+                    showSuccessModal(divisionName, 'Division');
+                    
+                    // Reload divisions list
+                    setTimeout(() => {
+                        loadExistingDivisions();
+                    }, 500);
                 } else {
+                    // Show error message upfront
                     showAlert('error', data.message);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                showAlert('error', 'Failed to create division. Please try again.');
+                showAlert('error', 'Terjadi kesalahan saat membuat divisi');
             })
             .finally(() => {
                 submitButton.disabled = false;
@@ -196,12 +236,13 @@
         // Confirm delete division
         function confirmDeleteDivision() {
             const divisionId = document.getElementById('deleteDivisionId').value;
+            const divisionName = document.getElementById('deleteDivisionName').textContent;
             
             if (!divisionId) return;
 
             const deleteButton = document.querySelector('#deleteConfirmModal .btn-danger');
             deleteButton.disabled = true;
-            deleteButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
+            deleteButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Menghapus...';
 
             fetch(`/divisions/${divisionId}`, {
                 method: 'DELETE'
@@ -209,16 +250,23 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showAlert('success', data.message);
+                    // Hide delete modal
                     bootstrap.Modal.getInstance(document.getElementById('deleteConfirmModal')).hide();
-                    loadExistingDivisions();
+                    
+                    // Show success modal
+                    showSuccessModal(divisionName, 'Division', 'deleted');
+                    
+                    // Reload divisions list
+                    setTimeout(() => {
+                        loadExistingDivisions();
+                    }, 500);
                 } else {
                     showAlert('error', data.message);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                showAlert('error', 'Failed to delete division. Please try again.');
+                showAlert('error', 'Terjadi kesalahan saat menghapus divisi');
             })
             .finally(() => {
                 deleteButton.disabled = false;
@@ -228,67 +276,161 @@
 
         // Load existing divisions
         function loadExistingDivisions() {
+            console.log('Loading existing divisions...');
+            
             fetch('/divisions')
-            .then(response => response.json())
+            .then(response => {
+                console.log('Response status:', response.status);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
+                console.log('Received data:', data);
+                
                 if (data.success) {
-                    populateTable(data.divisions);
+                    if (data.divisions && data.divisions.length > 0) {
+                        console.log(`Found ${data.divisions.length} divisions`);
+                        populateTable(data.divisions);
+                    } else {
+                        console.log('No divisions found');
+                        if (dataTable) {
+                            dataTable.clear().draw();
+                        }
+                    }
                 } else {
-                    showAlert('error', 'Failed to load divisions: ' + data.message);
+                    console.error('Failed to load divisions:', data.message);
+                    showAlert('error', 'Gagal memuat divisi: ' + data.message);
                 }
             })
             .catch(error => {
-                console.error('Error:', error);
-                showAlert('error', 'Error loading divisions. Please refresh the page.');
+                console.error('Error loading divisions:', error);
+                showAlert('error', 'Error memuat divisi: ' + error.message);
             });
         }
 
         // Populate table with divisions data
         function populateTable(divisions) {
+            console.log('Populating DataTable with divisions:', divisions);
+            
+            if (!dataTable) {
+                console.error('dataTable is not initialized');
+                initializeDataTables();
+                return;
+            }
+
             // Clear existing data
             dataTable.clear();
 
+            if (!divisions || divisions.length === 0) {
+                console.log('No divisions to populate');
+                dataTable.draw();
+                return;
+            }
+
             // Add new data
-            divisions.forEach(div => {
+            divisions.forEach((div, index) => {
+                console.log(`Adding division ${index + 1}:`, div);
+                
                 const actionButton = `
                     <button class="btn btn-danger btn-sm" onclick="deleteDivision(${div.id}, '${div.division_name.replace(/'/g, "\\'")}')">
-                        <i class="fas fa-trash"></i> Delete
+                        <i class="fas fa-trash"></i>
                     </button>
                 `;
 
-                dataTable.row.add([
-                    div.division_name,
-                    div.created_by,
-                    div.created_date,
-                    actionButton
-                ]);
+                try {
+                    dataTable.row.add([
+                        div.division_name || 'N/A',
+                        div.created_by || 'N/A',
+                        div.created_date || 'N/A',
+                        actionButton
+                    ]);
+                } catch (error) {
+                    console.error(`Error adding row ${index}:`, error);
+                }
             });
 
             // Redraw the table
             dataTable.draw();
+            console.log('DataTable populated and drawn');
         }
 
         // Show alert messages
         function showAlert(type, message) {
-            const alertContainer = document.getElementById('alertContainer');
-            const alert = alertContainer.querySelector('.alert');
-            const alertMessage = document.getElementById('alertMessage');
+            // Remove existing alerts
+            $('.alert').remove();
             
-            // Set alert type
-            alert.className = `alert alert-${type === 'error' ? 'danger' : type} alert-dismissible fade show`;
+            const alertClass = type === 'success' ? 'alert-success' : type === 'warning' ? 'alert-warning' : 'alert-danger';
+            const alertIcon = type === 'success' ? '✅' : type === 'warning' ? '⚠️' : '❌';
             
-            // Set message
-            alertMessage.textContent = message;
+            const alert = $(`
+                <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+                    ${alertIcon} ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `);
             
-            // Show alert
-            alertContainer.style.display = 'block';
+            // Insert alert at the top of the main content
+            $('.main-content').prepend(alert);
             
-            // Auto-hide success messages after 5 seconds
-            if (type === 'success') {
-                setTimeout(() => {
-                    alertContainer.style.display = 'none';
-                }, 5000);
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                alert.alert('close');
+            }, 5000);
+        }
+
+        function showSuccessModal(itemName, itemType, action = 'created') {
+            // Create success modal if it doesn't exist
+            let successModal = document.getElementById('successModal');
+            if (!successModal) {
+                createSuccessModal();
+                successModal = document.getElementById('successModal');
             }
+            
+            // Update modal content
+            const modalMessage = document.getElementById('successModalMessage');
+            const actionText = action === 'deleted' ? 'deleted and verified successfully' : 'created and verified successfully';
+            modalMessage.innerHTML = `${itemType} <strong>${itemName}</strong> ${actionText}`;
+            
+            // Show the modal
+            const modal = new bootstrap.Modal(successModal);
+            modal.show();
+            
+            // Auto-hide after 3 seconds
+            setTimeout(() => {
+                modal.hide();
+            }, 3000);
+        }
+
+        // Create success modal HTML (same as Create Template)
+        function createSuccessModal() {
+            const modalHTML = `
+                <div class="modal fade" id="successModal" tabindex="-1" aria-labelledby="successModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header bg-success text-white">
+                                <h5 class="modal-title" id="successModalLabel">
+                                    <i class="fas fa-check-circle"></i> Success
+                                </h5>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body text-center">
+                                <div class="mb-3">
+                                    <i class="fas fa-check-circle text-success" style="font-size: 3rem;"></i>
+                                </div>
+                                <p id="successModalMessage" class="fs-5"></p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-success" data-bs-dismiss="modal">OK</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Append to body
+            document.body.insertAdjacentHTML('beforeend', modalHTML);
         }
 
         // Handle modal close events

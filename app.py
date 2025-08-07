@@ -31,31 +31,6 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Decorator untuk proteksi admin
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'username' not in session:
-            flash("Please log in first.")
-            return redirect(url_for('login'))
-        
-        if session.get('role_access') != 'admin':
-            flash("Access denied. Admin privileges required.")
-            return redirect(url_for('upload_file'))
-        
-        return f(*args, **kwargs)
-    return decorated_function
-
-# Decorator untuk proteksi user login
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'username' not in session:
-            flash("Please log in first.")
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
-
 def render_alert(message, redirect_url, username, fullname, email, role_access=None, division=None):
     return '''
     <script>
@@ -69,96 +44,124 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ['xlsx', 'xls']
 
 def find_primary_header_row(df, primary_header_pattern=None):
-    """
-    Mencari baris yang mengandung header utama (dinamis)
-    Args:
-        df: DataFrame Excel
-        primary_header_pattern: Pattern header utama (bisa None untuk auto-detect)
-    
-    Returns: 
-        tuple (header_row_index, detected_primary_header)
-    """
-    
     def normalize_text(text):
-        """Normalisasi teks untuk perbandingan"""
         if pd.isna(text):
             return ""
         return str(text).lower().strip()
-    
+
     def is_likely_header_row(row_values):
-        """
-        Menentukan apakah baris ini kemungkinan baris header
-        Kriteria: mengandung teks yang tidak kosong dan tidak numeric
-        """
         non_empty_count = 0
         text_count = 0
-        
+        numeric_count = 0
+
         for val in row_values:
             if pd.notna(val) and str(val).strip():
                 non_empty_count += 1
-                # Cek apakah nilai bukan angka murni
                 try:
                     float(str(val))
+                    numeric_count += 1
                 except ValueError:
                     text_count += 1
-        
-        # Header row harus punya minimal 3 kolom berisi dan mayoritas teks
-        return non_empty_count >= 3 and text_count >= (non_empty_count * 0.6)
-    
-    # Jika primary_header_pattern diberikan, cari berdasarkan pattern tersebut
+
+        if non_empty_count < 2:
+            return False
+
+        if numeric_count == non_empty_count:
+            return False
+
+        return True
+
+    def check_column_pattern(row_values):
+        text_values = [normalize_text(val) for val in row_values if pd.notna(val) and str(val).strip()]
+        column_pattern_count = sum(1 for val in text_values if val.startswith('column_'))
+        if column_pattern_count >= 2:
+            return 10
+
+        header_indicators = ['col', 'field', 'data', 'info', 'value', 'item']
+        score = 0
+        for val in text_values:
+            for indicator in header_indicators:
+                if indicator in val:
+                    score += 1
+        return score
+
+    # Step 1: jika diberikan primary_header_pattern
     if primary_header_pattern:
         pattern_normalized = normalize_text(primary_header_pattern)
-        
         for idx, row in df.iterrows():
             row_values = [normalize_text(val) for val in row]
-            
-            # Cari pattern di baris ini
             for val in row_values:
                 if pattern_normalized in val or val in pattern_normalized:
-                    if is_likely_header_row(row_values):
+                    if is_likely_header_row(row.values):
                         logger.info(f"Header row ditemukan di baris {idx + 1} berdasarkan pattern '{primary_header_pattern}'")
                         return idx, primary_header_pattern
-    
-    # Auto-detect: Cari baris yang kemungkinan header
+
+    # Step 2: auto-detection
+    best_header_row = None
+    best_score = -1
+    detected_primary = None
+
     common_header_keywords = [
         'number', 'name', 'id', 'code', 'facility', 'location', 'type', 
-        'date', 'status', 'description', 'value', 'amount', 'quantity'
+        'date', 'status', 'description', 'value', 'amount', 'quantity',
+        'column', 'field', 'data', 'info'
     ]
-    
-    best_header_row = None
-    best_score = 0
-    detected_primary = None
-    
+
     for idx, row in df.iterrows():
-        if idx > 20:  # Batasi pencarian di 20 baris pertama
+        if idx > 20:
             break
-            
-        row_values = [str(val) for val in row if pd.notna(val)]
-        
-        if not is_likely_header_row(row_values):
+
+        if not is_likely_header_row(row.values):
             continue
-        
-        # Scoring berdasarkan keyword yang ditemukan
+
         score = 0
         primary_candidate = None
-        
+        row_values = [str(val) for val in row if pd.notna(val)]
+
+        # Penambahan: beri preferensi lebih tinggi jika ini baris pertama
+        if idx == 0:
+            score += 5  # penalti negatif untuk baris bukan pertama
+
+        # Skor berdasarkan keyword
         for val in row_values:
-            val_normalized = normalize_text(val)
+            val_norm = normalize_text(val)
             for keyword in common_header_keywords:
-                if keyword in val_normalized:
+                if keyword in val_norm:
                     score += 1
-                    if not primary_candidate and ('number' in val_normalized or 'id' in val_normalized):
+                    if not primary_candidate and (
+                        'number' in val_norm or 'id' in val_norm or 'column' in val_norm
+                    ):
                         primary_candidate = str(val).strip()
-        
+
+        # Skor berdasarkan pola column_
+        score += check_column_pattern(row.values)
+
+        # Tambahan bonus untuk jumlah kolom
+        non_empty_count = sum(1 for val in row_values if str(val).strip())
+        if non_empty_count >= 3:
+            score += 2
+
         if score > best_score:
             best_score = score
             best_header_row = idx
             detected_primary = primary_candidate or str(row_values[0]).strip()
-    
+
     if best_header_row is not None:
-        logger.info(f"Header row auto-detected di baris {best_header_row + 1}, primary header: '{detected_primary}'")
+        logger.info(f"Header row auto-detected di baris {best_header_row + 1}, primary header: '{detected_primary}', score: {best_score}")
         return best_header_row, detected_primary
-    
+
+    # Fallback
+    logger.warning("Menggunakan fallback detection...")
+    for idx, row in df.iterrows():
+        if idx > 10:
+            break
+        if is_likely_header_row(row.values):
+            row_values = [str(val) for val in row if pd.notna(val)]
+            if row_values:
+                detected_primary = str(row_values[0]).strip()
+                logger.info(f"Header row fallback detected di baris {idx + 1}, primary header: '{detected_primary}'")
+                return idx, detected_primary
+
     raise ValueError("Tidak dapat menemukan baris header. Pastikan file Excel memiliki baris header yang jelas.")
 
 def find_header_row_and_validate(df, required_headers, primary_header_pattern=None):
@@ -202,13 +205,16 @@ def find_header_row_and_validate(df, required_headers, primary_header_pattern=No
     # Cari baris header
     header_row, detected_primary = find_primary_header_row(df, primary_header_pattern)
 
-    # Ambil semua header dari baris tersebut
-    excel_headers = []
-    for val in df.iloc[header_row]:
-        if pd.notna(val):
-            excel_headers.append(str(val).strip())
-        else:
-            excel_headers.append("")
+    # Deteksi kolom pertama yang tidak kosong (agar kolom kosong seperti kolom A tidak ikut)
+    first_nonempty_col_index = next(
+        (idx for idx, val in enumerate(df.iloc[header_row]) if pd.notna(val) and str(val).strip()), 0
+    )
+
+    # Ambil header dari kolom aktif ke kanan
+    excel_headers = [
+        str(val).strip() if pd.notna(val) else ""
+        for val in df.iloc[header_row][first_nonempty_col_index:]
+    ]
 
     # Validasi dan mapping
     valid_headers_mapping = []  # List of tuples: (excel_header, db_header)
@@ -277,6 +283,12 @@ def find_data_start_row(df, header_row, detected_primary_header):
     
     Returns: data_start_row_index
     """
+    
+    def normalize_text(text):
+        if pd.isna(text):
+            return ""
+        return str(text).lower().strip()
+
     # Cari index kolom primary header
     excel_headers = []
     for val in df.iloc[header_row]:
@@ -286,10 +298,13 @@ def find_data_start_row(df, header_row, detected_primary_header):
     
     # Cari kolom yang cocok dengan detected primary header
     for idx, header in enumerate(excel_headers):
-        if header and (
-            header.lower().strip() == detected_primary_header.lower().strip() or
-            detected_primary_header.lower().strip() in header.lower().strip() or
-            header.lower().strip() in detected_primary_header.lower().strip()
+        header_norm = normalize_text(header)
+        primary_norm = normalize_text(detected_primary_header)
+        
+        if header_norm and (
+            header_norm == primary_norm or
+            primary_norm in header_norm or
+            header_norm in primary_norm
         ):
             primary_col_index = idx
             break
@@ -327,7 +342,7 @@ def find_data_start_row(df, header_row, detected_primary_header):
 
 def get_column_info(table_name, exclude_automatic=True):
     """
-    Mendapatkan informasi kolom dari tabel database
+    Mendapatkan informasi kolom dari tabel database dengan informasi lengkap
     Args:
         table_name: Nama tabel
         exclude_automatic: True untuk mengecualikan kolom otomatis (period_date, upload_date)
@@ -369,12 +384,13 @@ def get_column_info(table_name, exclude_automatic=True):
                 continue
                 
             columns_info[column_name] = {
+                'name': column_name,  # Tambahkan nama kolom untuk error messages
                 'data_type': col[1],
                 'max_length': col[2],
                 'precision': col[3],
                 'scale': col[4],
                 'is_nullable': col[5] == 'YES',
-                'default': col[6]
+                'default_value': col[6]
             }
         
         return columns_info
@@ -385,6 +401,8 @@ def get_column_info(table_name, exclude_automatic=True):
     finally:
         if cursor:
             cursor.close()
+        if conn:
+            conn.close()
 
 def get_automatic_columns():
     """
@@ -394,185 +412,89 @@ def get_automatic_columns():
 
 def validate_and_convert_value(value, column_info, column_name):
     """
-    Validasi dan konversi nilai sesuai dengan tipe data kolom
+    Validate and convert value based on column type and constraints
     Returns: (converted_value, is_valid, error_message)
     """
-    data_type = column_info['data_type']
-    is_nullable = column_info['is_nullable']
-    max_length = column_info['max_length']
-    precision = column_info['precision']
-    scale = column_info['scale']
-    
-    # Handle NULL values
-    if pd.isna(value) or value is None or (isinstance(value, str) and value.strip() == ''):
-        if is_nullable:
-            return None, True, None
-        else:
-            return None, False, f"Column '{column_name}' cannot be NULL"
-    
-    # Convert to string for processing
-    str_value = str(value).strip()
-    
-    # Handle different data types
     try:
-        if data_type in ['int', 'integer', 'bigint', 'smallint', 'tinyint']:
-            return validate_integer(str_value, column_name)
+        # Handle NULL values first
+        processed_value = handle_null_values_for_column(value, {**column_info, 'name': column_name})
+        
+        # If processed value is None (valid NULL), return it
+        if processed_value is None:
+            return None, True, ""
+        
+        # Get column type for conversion
+        col_type = column_info.get('data_type', '').upper()
+        
+        # Convert based on data type
+        if col_type in ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR', 'TEXT']:
+            str_value = str(processed_value).strip()
+            max_length = column_info.get('max_length')
             
-        elif data_type in ['decimal', 'numeric', 'money', 'smallmoney']:
-            return validate_decimal(str_value, precision, scale, column_name)
+            if max_length and len(str_value) > max_length:
+                return None, False, f"String length ({len(str_value)}) exceeds maximum length ({max_length})"
             
-        elif data_type in ['float', 'real']:
-            return validate_float(str_value, column_name)
+            return str_value, True, ""
             
-        elif data_type in ['varchar', 'nvarchar', 'char', 'nchar', 'text', 'ntext']:
-            return validate_string(str_value, max_length, column_name)
+        elif col_type == 'BIT':
+            if isinstance(processed_value, bool):
+                return processed_value, True, ""
             
-        elif data_type in ['date', 'datetime', 'datetime2', 'smalldatetime', 'datetimeoffset']:
-            return validate_datetime(str_value, data_type, column_name)
+            str_val = str(processed_value).lower().strip()
+            if str_val in ['1', 'true', 'yes', 'y']:
+                return True, True, ""
+            elif str_val in ['0', 'false', 'no', 'n']:
+                return False, True, ""
+            else:
+                return None, False, f"Invalid boolean value: '{processed_value}'. Expected: 1/0, true/false, yes/no"
+                
+        elif col_type in ['INT', 'BIGINT', 'SMALLINT', 'TINYINT']:
+            try:
+                # Handle string numbers
+                if isinstance(processed_value, str):
+                    processed_value = processed_value.replace(',', '')  # Remove thousand separators
+                
+                int_value = int(float(processed_value))
+                return int_value, True, ""
+            except (ValueError, TypeError):
+                return None, False, f"Invalid integer value: '{processed_value}'"
+                
+        elif col_type in ['DECIMAL', 'NUMERIC', 'FLOAT', 'REAL']:
+            try:
+                if isinstance(processed_value, str):
+                    processed_value = processed_value.replace(',', '')  # Remove thousand separators
+                
+                float_value = float(processed_value)
+                return float_value, True, ""
+            except (ValueError, TypeError):
+                return None, False, f"Invalid numeric value: '{processed_value}'"
+                
+        elif col_type in ['DATE', 'DATETIME', 'DATETIME2']:
+            if isinstance(processed_value, (datetime, date)):
+                return processed_value, True, ""
             
-        elif data_type in ['bit']:
-            return validate_boolean(str_value, column_name)
+            # Try to parse string dates
+            date_formats = [
+                '%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d/%m/%Y',
+                '%Y/%m/%d', '%d-%m-%Y', '%m-%d-%Y', '%Y%m%d'
+            ]
+            
+            for fmt in date_formats:
+                try:
+                    parsed_date = datetime.strptime(str(processed_value), fmt)
+                    return parsed_date.date() if col_type == 'DATE' else parsed_date, True, ""
+                except ValueError:
+                    continue
+            
+            return None, False, f"Invalid date format: '{processed_value}'. Expected formats: YYYY-MM-DD, MM/DD/YYYY, etc."
             
         else:
             # For unknown types, return as string
-            logger.warning(f"Unknown data type '{data_type}' for column '{column_name}', treating as string")
-            return str_value, True, None
+            return str(processed_value), True, ""
             
     except Exception as e:
-        return None, False, f"Error validating column '{column_name}': {str(e)}"
-
-def validate_integer(value, column_name):
-    """Validate and convert to integer"""
-    try:
-        # Remove whitespace and check for empty string
-        if not value or value.isspace():
-            return None, False, f"Empty value for integer column '{column_name}'"
-        
-        # Try to convert to int
-        if isinstance(value, (int, float)):
-            if isinstance(value, float) and not value.is_integer():
-                return None, False, f"Float value '{value}' cannot be converted to integer for column '{column_name}'"
-            return int(value), True, None
-        
-        # Handle string representation
-        clean_value = value.replace(',', '').replace(' ', '')
-        
-        # Check if it's a valid integer string
-        if clean_value.lstrip('-+').isdigit():
-            return int(clean_value), True, None
-        
-        # Try float conversion first, then check if it's a whole number
-        try:
-            float_val = float(clean_value)
-            if float_val.is_integer():
-                return int(float_val), True, None
-            else:
-                return None, False, f"Value '{value}' is not a whole number for integer column '{column_name}'"
-        except ValueError:
-            return None, False, f"Value '{value}' cannot be converted to integer for column '{column_name}'"
-            
-    except Exception as e:
-        return None, False, f"Error converting '{value}' to integer for column '{column_name}': {str(e)}"
-
-def validate_decimal(value, precision, scale, column_name):
-    """Validate and convert to decimal"""
-    try:
-        if not value or (isinstance(value, str) and value.isspace()):
-            return None, False, f"Empty value for decimal column '{column_name}'"
-        
-        # Remove whitespace and commas
-        clean_value = str(value).replace(',', '').replace(' ', '')
-        
-        # Try to convert to Decimal
-        decimal_val = Decimal(clean_value)
-        
-        # Check precision and scale if specified
-        if precision is not None:
-            # Get number of digits
-            sign, digits, exponent = decimal_val.as_tuple()
-            total_digits = len(digits)
-            
-            if total_digits > precision:
-                return None, False, f"Value '{value}' exceeds precision {precision} for column '{column_name}'"
-            
-            if scale is not None and abs(exponent) > scale:
-                return None, False, f"Value '{value}' exceeds scale {scale} for column '{column_name}'"
-        
-        return float(decimal_val), True, None
-        
-    except (InvalidOperation, ValueError) as e:
-        return None, False, f"Value '{value}' cannot be converted to decimal for column '{column_name}'"
-
-def validate_float(value, column_name):
-    """Validate and convert to float"""
-    try:
-        if not value or (isinstance(value, str) and value.isspace()):
-            return None, False, f"Empty value for float column '{column_name}'"
-        
-        clean_value = str(value).replace(',', '').replace(' ', '')
-        return float(clean_value), True, None
-        
-    except ValueError:
-        return None, False, f"Value '{value}' cannot be converted to float for column '{column_name}'"
-
-def validate_string(value, max_length, column_name):
-    """Validate string length"""
-    str_value = str(value)
+        return None, False, f"Validation error: {str(e)}"
     
-    if max_length is not None and len(str_value) > max_length:
-        return None, False, f"String '{str_value[:20]}...' exceeds maximum length {max_length} for column '{column_name}'"
-    
-    return str_value, True, None
-
-def validate_datetime(value, data_type, column_name):
-    """Validate and convert datetime"""
-    if not value or (isinstance(value, str) and value.isspace()):
-        return None, False, f"Empty value for datetime column '{column_name}'"
-    
-    # Common datetime formats to try
-    datetime_formats = [
-        '%Y-%m-%d',
-        '%Y-%m-%d %H:%M:%S',
-        '%Y-%m-%d %H:%M:%S.%f',
-        '%d/%m/%Y',
-        '%d-%m-%Y',
-        '%m/%d/%Y',
-        '%d/%m/%Y %H:%M:%S',
-        '%d-%m-%Y %H:%M:%S',
-        '%m/%d/%Y %H:%M:%S',
-        '%Y/%m/%d',
-        '%Y/%m/%d %H:%M:%S'
-    ]
-    
-    str_value = str(value).strip()
-    
-    # Try each format
-    for fmt in datetime_formats:
-        try:
-            dt = datetime.strptime(str_value, fmt)
-            if data_type == 'date':
-                return dt.date(), True, None
-            else:
-                return dt, True, None
-        except ValueError:
-            continue
-    
-    return None, False, f"Value '{value}' is not a valid datetime format for column '{column_name}'"
-
-def validate_boolean(value, column_name):
-    """Validate and convert to boolean"""
-    if isinstance(value, bool):
-        return value, True, None
-    
-    str_value = str(value).strip().lower()
-    
-    if str_value in ['true', '1', 'yes', 'y', 'on']:
-        return True, True, None
-    elif str_value in ['false', '0', 'no', 'n', 'off']:
-        return False, True, None
-    else:
-        return None, False, f"Value '{value}' cannot be converted to boolean for column '{column_name}'"
-
 def validate_batch_data(df, columns_info):
     """
     Validate entire batch of data before insert
@@ -624,14 +546,84 @@ def validate_batch_data(df, columns_info):
     validated_df = pd.DataFrame(validated_data)
     return validated_df, True, []
 
+def process_uploaded_data(df, table_name):
+    """
+    Process uploaded DataFrame with proper NULL handling
+    Improved version with better error reporting
+    """
+    conn = None
+    cursor = None
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get column information for the table
+        cursor.execute("""
+            SELECT 
+                c.COLUMN_NAME,
+                c.DATA_TYPE,
+                c.IS_NULLABLE,
+                c.COLUMN_DEFAULT,
+                c.CHARACTER_MAXIMUM_LENGTH
+            FROM INFORMATION_SCHEMA.COLUMNS c
+            WHERE c.TABLE_NAME = ?
+            AND c.COLUMN_NAME NOT IN ('id', 'period_date', 'upload_date')
+            ORDER BY c.ORDINAL_POSITION
+        """, (table_name,))
+        
+        columns_info = cursor.fetchall()
+        
+        # Create column mapping
+        column_mapping = {}
+        for col_info in columns_info:
+            column_mapping[col_info[0]] = {
+                'name': col_info[0],
+                'data_type': col_info[1],
+                'is_nullable': col_info[2] == 'YES',
+                'default_value': col_info[3],
+                'max_length': col_info[4]
+            }
+        
+        # Process each row in DataFrame
+        processed_rows = []
+        for index, row in df.iterrows():
+            processed_row = {}
+            
+            for col_name, value in row.items():
+                if col_name in column_mapping:
+                    try:
+                        processed_value = handle_null_values_for_column(
+                            value, 
+                            column_mapping[col_name]
+                        )
+                        processed_row[col_name] = processed_value
+                    except ValueError as ve:
+                        logger.error(f"Row {index + 1}, Column {col_name}: {str(ve)}")
+                        raise ValueError(f"Row {index + 1}, Column {col_name}: {str(ve)}")
+            
+            processed_rows.append(processed_row)
+        
+        return processed_rows
+        
+    except Exception as e:
+        logger.error(f"Error processing uploaded data: {str(e)}")
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 def process_excel_file(file_path, table_name, primary_header=None, sheet_name=None, periode_date=None):
     """
-    Memproses file Excel dan insert data ke database dengan validasi header lengkap
+    Memproses file Excel, validasi, normalisasi null, dan insert ke database
     """
     try:
         if not sheet_name:
             return {'success': False, 'message': 'Nama sheet harus dipilih'}
-        # Baca file Excel (kode yang sama seperti sebelumnya)
+
+        # Baca file Excel
         try:
             df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
         except ValueError as e:
@@ -639,69 +631,44 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
                 return {'success': False, 'message': f'Sheet "{sheet_name}" tidak ditemukan dalam file Excel'}
             else:
                 return {'success': False, 'message': f'Error membaca sheet: {str(e)}'}
-        
-        # Validasi apakah sheet kosong
+
         if df.empty:
             return {'success': False, 'message': f'Sheet "{sheet_name}" kosong atau tidak memiliki data'}
-        
-        logger.info(f"File Excel berhasil dibaca dengan {len(df)} baris dan {len(df.columns)} kolom")
-        
-        # PERBAIKAN: Dapatkan kolom yang diperlukan TANPA kolom otomatis
+
         columns_info = get_column_info(table_name, exclude_automatic=True)
         required_headers = list(columns_info.keys())
-        logger.info(f"Header yang diperlukan dari database (tanpa kolom otomatis): {required_headers}")
-        
-        # Cari baris header dan validasi keberadaan header
+
         header_row, valid_headers_mapping, missing_headers, detected_primary = find_header_row_and_validate(
             df, required_headers, primary_header
         )
-        
-        # Cari baris mulai data
+
         data_start_row = find_data_start_row(df, header_row, detected_primary)
-        
-        # Ambil header dari baris yang ditemukan
-        excel_headers = []
-        for val in df.iloc[header_row]:
-            excel_headers.append(str(val).strip() if pd.notna(val) else "")
-        
-        # Ambil data mulai dari baris yang ditemukan
+
+        excel_headers = [str(val).strip() if pd.notna(val) else "" for val in df.iloc[header_row]]
+
         data_df = df.iloc[data_start_row:].copy()
-        
-        # Set kolom names
-        data_df.columns = range(len(data_df.columns))  # Reset ke numeric index
-        
-        # Buat mapping index kolom berdasarkan header yang valid
+        data_df.columns = range(len(data_df.columns))
+
         col_index_mapping = {}
         for excel_header, db_header in valid_headers_mapping:
             for idx, header in enumerate(excel_headers):
                 if header == excel_header:
                     col_index_mapping[idx] = db_header
                     break
-        
-        # Filter dan rename kolom
+
         filtered_data = {}
         for col_idx, db_header in col_index_mapping.items():
             if col_idx < len(data_df.columns):
                 filtered_data[db_header] = data_df.iloc[:, col_idx]
-        
+
         if not filtered_data:
             raise ValueError("Tidak ada data yang dapat diekstrak dari file Excel")
-        
-        # Buat DataFrame baru dengan kolom yang sudah difilter
+
         final_df = pd.DataFrame(filtered_data)
-        
-        # Bersihkan data - hapus baris yang kosong
         final_df = final_df.dropna(how='all')
-        
-        # Hapus baris yang semua kolomnya kosong atau hanya berisi string kosong
         final_df = final_df[~final_df.astype(str).apply(lambda x: x.str.strip().eq('').all(), axis=1)]
-        
-        # Reset index
         final_df = final_df.reset_index(drop=True)
-        
-        logger.info(f"Data yang akan divalidasi: {len(final_df)} baris")
-        logger.info(f"Kolom yang akan divalidasi: {list(final_df.columns)}")
-        
+
         if len(final_df) == 0:
             return {
                 'success': False,
@@ -715,19 +682,16 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
                     'sheet_used': sheet_name if sheet_name else 'Sheet pertama'
                 }
             }
-        
-        # **VALIDASI BATCH DATA SEBELUM INSERT**
-        # Filter columns_info hanya untuk kolom yang ada di final_df
+
+        # Validasi batch data
         relevant_columns_info = {col: columns_info[col] for col in final_df.columns if col in columns_info}
-        
         validated_df, is_valid, validation_errors = validate_batch_data(final_df, relevant_columns_info)
-        
+
         if not is_valid:
-            logger.error(f"Validasi data gagal: {len(validation_errors)} error ditemukan")
             return {
                 'success': False,
-                'message': f'Validasi data gagal. Seluruh operasi insert dibatalkan karena ditemukan {len(validation_errors)} error validasi.',
-                'validation_errors': validation_errors[:10],  # Tampilkan 10 error pertama
+                'message': f'Validasi data gagal. {len(validation_errors)} error ditemukan.',
+                'validation_errors': validation_errors[:10],
                 'total_errors': len(validation_errors),
                 'header_info': {
                     'header_row': header_row + 1,
@@ -738,13 +702,14 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
                     'sheet_used': sheet_name if sheet_name else 'Sheet pertama'
                 }
             }
-        
-        logger.info(f"Validasi data berhasil. Data siap untuk insert: {len(validated_df)} baris")
-        
-        # Insert data ke database
-        result = insert_to_database(validated_df, table_name, periode_date, replace_existing=True)
-        
-        # Tambahkan informasi header yang tidak ditemukan ke result
+
+        # Gunakan process_uploaded_data untuk menangani NULL, default, dll
+        processed_data = process_uploaded_data(validated_df, table_name)
+        processed_df = pd.DataFrame(processed_data)
+
+        # Insert ke database setelah proses dan validasi
+        result = insert_to_database(processed_df, table_name, periode_date, replace_existing=True)
+
         result['header_info'] = {
             'periode_date': periode_date,
             'header_row': header_row + 1,
@@ -754,15 +719,13 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
             'missing_headers': missing_headers,
             'sheet_used': sheet_name if sheet_name else 'Sheet pertama'
         }
-        
-        # PERBAIKAN: Hanya tampilkan warning untuk header yang SEHARUSNYA ada di Excel
-        # Jangan tampilkan warning untuk kolom otomatis
+
         if missing_headers:
             result['missing_headers'] = missing_headers
             result['warning'] = f"Header tidak ditemukan di file Excel: {', '.join(missing_headers)}. Kolom ini dilewati saat insert."
-        
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Error processing Excel file: {str(e)}")
         raise
@@ -770,20 +733,23 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
 def normalize_value(value, dtype=None):
     """
     Normalisasi nilai untuk insert ke SQL Server:
-    - 'N/A', '', 'None', NaN => None (kecuali int/float => 0)
-    - '-' => 0 jika int/float, else None
+    - 'N/A', '', 'None', 'null', NaN => None (untuk kolom non-numeric)
+    - '-' => 0 jika numeric, else None
+    - Membersihkan tanda kurung & kutip jika ada
     """
-    cleaned = str(value).strip().upper()
+    if pd.isna(value):
+        return 0 if dtype and ('int' in dtype or 'float' in dtype) else None
 
-    if pd.isna(value) or cleaned in ['N/A', '', 'NONE']:
-        if dtype and ('int' in dtype or 'float' in dtype):
-            return 0
-        return None
+    cleaned = str(value).strip()
+    cleaned_simple = cleaned.strip("'\"() ").upper()
+
+    null_equivalents = {'N/A', '', 'NONE', 'NULL'}
+
+    if cleaned_simple in null_equivalents:
+        return 0 if dtype and ('int' in dtype or 'float' in dtype) else None
 
     if cleaned == '-':
-        if dtype and ('int' in dtype or 'float' in dtype):
-            return 0
-        return None
+        return 0 if dtype and ('int' in dtype or 'float' in dtype) else None
 
     return value
 
@@ -806,8 +772,9 @@ def insert_to_database(df, table_name, periode_date=None, replace_existing=True)
         # Add automatic columns to the insert list
         insert_columns.extend(['period_date', 'upload_date'])
 
-        if not insert_columns:
-            raise ValueError("Tidak ada kolom valid untuk diinsert")
+        if not df.columns.tolist():
+            raise ValueError("DataFrame tidak memiliki kolom valid untuk diinsert")
+
 
         logger.info(f"Kolom yang akan diinsert: {insert_columns}")
 
@@ -883,7 +850,96 @@ def insert_to_database(df, table_name, periode_date=None, replace_existing=True)
             cursor.close()
         if conn:
             conn.close()
-                        
+
+def process_default_value(default_value, column_info):
+    """
+    Process default value based on column type
+    """
+    col_type = column_info.get('data_type', '').upper()
+    
+    try:
+        if col_type in ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR', 'TEXT']:
+            return str(default_value)
+            
+        elif col_type == 'BIT':
+            if str(default_value).lower() in ['1', 'true']:
+                return True
+            elif str(default_value).lower() in ['0', 'false']:
+                return False
+            else:
+                return bool(int(default_value))
+                
+        elif col_type in ['INT', 'BIGINT', 'SMALLINT', 'TINYINT']:
+            return int(float(default_value))
+            
+        elif col_type in ['DECIMAL', 'NUMERIC', 'FLOAT', 'REAL']:
+            return float(default_value)
+            
+        elif col_type in ['DATE', 'DATETIME', 'DATETIME2']:
+            # Handle SQL functions
+            if str(default_value).upper() in ['GETDATE()', 'GETUTCDATE()', 'SYSDATETIME()']:
+                from datetime import datetime
+                return datetime.now()
+            else:
+                # Try to parse date string
+                from datetime import datetime
+                date_formats = ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d/%m/%Y']
+                for fmt in date_formats:
+                    try:
+                        return datetime.strptime(str(default_value), fmt)
+                    except ValueError:
+                        continue
+                return default_value
+                
+        elif col_type == 'TIME':
+            from datetime import datetime, time
+            time_formats = ['%H:%M:%S', '%H:%M']
+            for fmt in time_formats:
+                try:
+                    parsed_time = datetime.strptime(str(default_value), fmt).time()
+                    return parsed_time
+                except ValueError:
+                    continue
+            return default_value
+            
+        else:
+            return str(default_value)
+            
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Error processing default value '{default_value}' for column '{column_info['name']}': {str(e)}")
+        return default_value
+
+def handle_null_values_for_column(value, column_info):
+    """
+    Handle NULL values based on column configuration
+    Improved version with better type handling
+    """
+    # Check if value is considered "null" in various formats
+    null_indicators = [None, '', 'NULL', 'null', 'Null', 'N/A', 'n/a', 'NA', 'na', '#N/A']
+    
+    # Handle pandas NaN and empty strings more thoroughly
+    is_null = (value in null_indicators or 
+               (isinstance(value, float) and pd.isna(value)) or
+               (isinstance(value, str) and value.strip() in [''] + null_indicators) or
+               value is None)
+    
+    if is_null:
+        if column_info.get('is_nullable', False):
+            return None  # Return None untuk NULL database value
+        else:
+            # Jika kolom tidak allow NULL, cek default value dulu
+            default_value = column_info.get('default_value')
+            if default_value is not None and str(default_value).strip() != '':
+                # Process default value berdasarkan tipe kolom
+                return process_default_value(default_value, column_info)
+            else:
+                # Jika tidak ada default value, lempar error dengan informasi kolom
+                col_name = column_info.get('name', 'Unknown')
+                raise ValueError(f"Column '{col_name}' cannot be NULL and has no default value")
+    
+    # If not null, return the value as is (will be processed later based on column type)
+    return value
+
 def get_template_tables():
     """
     Mendapatkan semua nama tabel yang mengandung kata 'template' dari database
@@ -897,11 +953,9 @@ def get_template_tables():
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT TABLE_NAME 
-            FROM INFORMATION_SCHEMA.TABLES 
-            WHERE TABLE_TYPE = 'BASE TABLE' 
-            AND LOWER(TABLE_NAME) LIKE '%template%'
-            ORDER BY TABLE_NAME
+            SELECT template_name 
+            FROM MasterCreator
+            ORDER BY create_date DESC
         """)
         
         tables = cursor.fetchall()
@@ -941,97 +995,6 @@ def get_master_divisions_tables():
         if conn:
             conn.close()
 
-def get_db_connection_with_retry(max_retries=3):
-    """Get database connection with retry logic"""
-    for attempt in range(max_retries):
-        try:
-            conn = get_db_connection()
-            # Test connection
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-            cursor.close()
-            return conn
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise e
-            time.sleep(0.1 * (attempt + 1))  # Progressive delay
-    return None
-
-def analyze_excel_structure(file_path, sheet_name):
-    """
-    Menganalisis struktur dan isi data dari sheet Excel tertentu
-    
-    Args:
-        file_path: Path ke file Excel
-        sheet_name: Nama sheet yang akan dianalisis
-        
-    Returns:
-        Dictionary berisi informasi analisis data
-    """
-    try:
-        # Baca sheet tertentu
-        df = pd.read_excel(file_path, sheet_name=sheet_name)
-        
-        # Informasi dasar
-        total_rows = len(df)
-        total_cols = len(df.columns)
-        
-        # Analisis kolom
-        columns_info = []
-        for col in df.columns:
-            col_info = {
-                'name': col,
-                'type': str(df[col].dtype),
-                'non_null_count': df[col].count(),
-                'null_count': df[col].isnull().sum(),
-                'unique_count': df[col].nunique(),
-                'sample_values': df[col].dropna().head(3).tolist() if not df[col].empty else []
-            }
-            
-            # Tambahan info untuk kolom numerik
-            if pd.api.types.is_numeric_dtype(df[col]):
-                col_info.update({
-                    'min_value': df[col].min(),
-                    'max_value': df[col].max(),
-                    'mean_value': round(df[col].mean(), 2) if not df[col].empty else None
-                })
-            
-            columns_info.append(col_info)
-        
-        # Sample data (5 baris pertama)
-        sample_data = df.head(5).to_dict('records')
-        
-        # Missing data summary
-        missing_data = df.isnull().sum()
-        missing_summary = {
-            'total_missing': missing_data.sum(),
-            'columns_with_missing': missing_data[missing_data > 0].to_dict()
-        }
-        
-        # Duplicate rows
-        duplicate_count = df.duplicated().sum()
-        
-        analysis_result = {
-            'sheet_name': sheet_name,
-            'basic_info': {
-                'total_rows': total_rows,
-                'total_columns': total_cols,
-                'duplicate_rows': duplicate_count
-            },
-            'columns_info': columns_info,
-            'sample_data': sample_data,
-            'missing_data': missing_summary,
-            'data_types': df.dtypes.value_counts().to_dict()
-        }
-        
-        logger.info(f"Analisis berhasil untuk sheet '{sheet_name}': {total_rows} baris, {total_cols} kolom")
-        return analysis_result
-        
-    except Exception as e:
-        logger.error(f"Error analyzing Excel structure: {str(e)}")
-        raise Exception(f"Gagal menganalisis struktur Excel: {str(e)}")
-
 def get_excel_sheets(file_path):
     """
     Mendapatkan daftar nama sheet dalam file Excel
@@ -1063,62 +1026,6 @@ def insert_to_MasterUploader(conn, username, division, template, sheets, file_up
     conn.commit()
 
 
-# Register route
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    # Ambil daftar divisi dari tabel divisions
-    cur.execute("SELECT division_name FROM MasterDivisions")
-    division_rows = cur.fetchall()
-    divisions = [row[0] for row in division_rows]
-
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        password_confirm = request.form['password_confirm']
-        role_access = request.form['role_access']
-        fullname = request.form['fullname']
-        email = request.form['email']
-        division = request.form['division']
-        created_date = datetime.now()
-
-        required_fields = ['username', 'password', 'password_confirm', 'role_access', 'fullname', 'email', 'division']
-        data = {field: request.form[field] for field in required_fields}
-
-        if not all(data.values()):
-            return render_alert("Please fill the empty form!", 'register', username, fullname, email, division, divisions=divisions)
-
-        if password != password_confirm:
-            return render_alert("Passwords do not match.", 'register', username, fullname, email, division, divisions=divisions)
-
-        password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
-
-        cur.execute("SELECT * FROM MasterUsers WHERE username = ?", (username,))
-        existing_user = cur.fetchone()
-        if existing_user:
-            return render_alert("Username already exists.", 'register', username, fullname, email, role_access, divisions=divisions)
-
-        cur.execute("SELECT * FROM MasterUsers WHERE email = ?", (email,))
-        existing_email = cur.fetchone()
-        if existing_email:
-            return render_alert("Email is already registered.", 'register', username, fullname, email, role_access, divisions=divisions)
-
-        cur.execute("""
-            INSERT INTO MasterUsers (username, password_hash, role_access, fullname, email, division, created_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (username, password_hash, role_access, fullname, email, division, created_date))
-        conn.commit()
-
-        return '''
-            <script>
-                alert("User registered successfully.");
-                window.location.href = "{}";
-            </script>
-        '''.format(url_for('login'))
-
-    return render_template('register.html', divisions=divisions)
          
 @app.route('/', methods=['GET', 'POST'])
 def login():
@@ -1143,6 +1050,47 @@ def login():
         flash("Invalid username or password.")
 
     return render_template('login.html')
+
+@app.route('/change_password', methods=['GET', 'POST'])
+def change_password():
+    conn = get_db_connection()
+    cur = conn.cursor()
+        
+    if 'username' not in session:
+        flash("You need to log in first.")
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        current_password = request.form['current_password']
+        new_password = request.form['new_password']
+        password_confirm = request.form['password_confirm']
+        username = session['username']
+
+        if new_password != password_confirm:
+            return render_alert("Passwords do not match.", 'change_password', username)
+
+        # Fetch the current hashed password from the database
+        cur.execute("SELECT password_hash FROM MasterUsers WHERE username = ?", (username,))
+        user = cur.fetchone()
+
+        if not user or not bcrypt.check_password_hash(user[0], current_password):
+            return render_alert("Current password is incorrect.", 'change_password', username)
+            
+        else:
+            # Hash the new password and update the database
+            new_password_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
+            cur.execute("UPDATE MasterUsers SET password_hash = ? WHERE username = ?", (new_password_hash, username))
+            conn.commit()
+            # flash("Password changed successfully.")
+            # return render_template('upload.html')
+            return '''
+                <script>
+                    alert("User registered successfully.");
+                    window.location.href = "{}";
+                </script>
+            '''.format(url_for('upload_file'))
+
+    return render_template('change_password.html')
 
 # Logout Route
 @app.route('/logout')
@@ -1336,6 +1284,7 @@ def analyze_excel():
             
             # Find data start row
             data_start_row = find_data_start_row(df, header_row, detected_primary)
+            total_data_rows = len(df) - data_start_row
             
             # Sample data
             sample_data = []
@@ -1349,7 +1298,7 @@ def analyze_excel():
             result = {
                 'success': True,
                 'analysis': {
-                    'total_rows': len(df),
+                    'total_rows': total_data_rows,
                     'total_columns': len(df.columns),
                     'header_row': header_row + 1,
                     'data_start_row': data_start_row + 1,
@@ -1430,10 +1379,9 @@ def create_table():
             if not divisions:
                 return jsonify({'success': False, 'message': 'Divisi harus dipilih'})
             
-            
-            # Validate table name (alphanumeric and underscore only)
+            # Validate table name (alphanumeric and underscore only, no spaces)
             if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', table_name):
-                return jsonify({'success': False, 'message': 'Nama tabel hanya boleh mengandung huruf, angka, dan underscore. Harus dimulai dengan huruf.'})
+                return jsonify({'success': False, 'message': 'Nama tabel hanya boleh mengandung huruf, angka, dan underscore. Harus dimulai dengan huruf dan tidak boleh ada spasi.'})
             
             # Get database connection
             conn = get_db_connection()
@@ -1459,18 +1407,21 @@ def create_table():
             for col in columns:
                 col_name = col.get('name', '').strip()
                 reserved_columns = ['id', 'period_date', 'upload_date']
+                
                 if col_name.lower() in reserved_columns:
                     return jsonify({'success': False, 'message': f'Kolom "{col_name}" tidak boleh dibuat secara manual karena sudah ditambahkan otomatis'})
+                
                 col_type = col.get('type', 'VARCHAR')
                 col_length = col.get('length', '')
                 allow_nulls = col.get('allow_nulls', False)
+                default_value = col.get('default_value', None)
                 
                 if not col_name:
                     return jsonify({'success': False, 'message': 'Semua kolom harus memiliki nama'})
                 
-                # Validate column name
-                if not re.match(r'^[a-zA-Z][a-zA-Z0-9_ /()\-\.\%]*$', col_name):
-                    return jsonify({'success': False, 'message': f'Nama kolom "{col_name}" tidak valid. Hanya boleh huruf, angka, dan underscore.'})
+                # Validate column name - DIPERBAIKI untuk menolak spasi
+                if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', col_name):
+                    return jsonify({'success': False, 'message': f'Nama kolom "{col_name}" tidak valid. Hanya boleh huruf, angka, dan underscore (tanpa spasi).'})
                 
                 # Build column definition
                 col_def = f"    [{col_name}] {col_type}"
@@ -1510,37 +1461,98 @@ def create_table():
                     col_def += " NOT NULL"
                 else:
                     col_def += " NULL"
-                    
-                default_value = col.get('default_value', None)
+                
+                # BAGIAN PERBAIKAN: Handle default values dengan validasi yang lebih ketat
                 if default_value not in [None, '']:
                     if col_type.upper() in ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR', 'TEXT']:
-                        # ✅ Properly escape single quotes and wrap with quotes
+                        # Properly escape single quotes and wrap with quotes
+                        print(f"Default value for {col_name}: {default_value}")
                         escaped_value = default_value.replace("'", "''")
+                        print(f"Escaped value for {col_name}: {escaped_value}")
                         col_def += f" DEFAULT '{escaped_value}'"
                     elif col_type.upper() in ['BIT']:
-                        if default_value not in ['0', '1']:
-                            return jsonify({'success': False, 'message': f'Default value tidak valid untuk kolom "{col_name}" bertipe BIT'})
-                        col_def += f" DEFAULT {default_value}"
-                    elif col_type.upper() in ['DATE', 'DATETIME']:
+                        if default_value.lower() in ['0', '1', 'false', 'true']:
+                            bit_value = '1' if default_value.lower() in ['1', 'true'] else '0'
+                            col_def += f" DEFAULT {bit_value}"
+                        else:
+                            return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" bertipe BIT harus 0, 1, true, atau false'})
+                    elif col_type.upper() in ['DATE', 'DATETIME', 'DATETIME2']:
                         # Handle special datetime functions
-                        if default_value.upper() in ['GETDATE()', 'GETUTCDATE()', 'SYSDATETIME()']:
+                        if default_value.upper() in ['GETDATE()', 'GETUTCDATE()', 'SYSDATETIME()', 'CURRENT_TIMESTAMP']:
                             col_def += f" DEFAULT {default_value.upper()}"
                         else:
-                            # Treat as date string
-                            escaped_value = default_value.replace("'", "''")
-                            col_def += f" DEFAULT '{escaped_value}'"
+                            # Validate date format
+                            try:
+                                from datetime import datetime
+                                # Try multiple date formats
+                                date_formats = ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d/%m/%Y']
+                                parsed_date = None
+                                for fmt in date_formats:
+                                    try:
+                                        parsed_date = datetime.strptime(default_value, fmt)
+                                        break
+                                    except ValueError:
+                                        continue
+                                
+                                if parsed_date is None:
+                                    raise ValueError("Invalid date format")
+                                    
+                                # Format untuk SQL Server
+                                formatted_date = parsed_date.strftime('%Y-%m-%d')
+                                col_def += f" DEFAULT '{formatted_date}'"
+                            except ValueError:
+                                return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" harus berformat YYYY-MM-DD atau fungsi seperti GETDATE()'})
+                    elif col_type.upper() in ['TIME']:
+                        # Handle time format
+                        try:
+                            from datetime import datetime
+                            time_formats = ['%H:%M:%S', '%H:%M', '%I:%M:%S %p', '%I:%M %p']
+                            parsed_time = None
+                            for fmt in time_formats:
+                                try:
+                                    parsed_time = datetime.strptime(default_value, fmt)
+                                    break
+                                except ValueError:
+                                    continue
+                            
+                            if parsed_time is None:
+                                raise ValueError("Invalid time format")
+                                
+                            formatted_time = parsed_time.strftime('%H:%M:%S')
+                            col_def += f" DEFAULT '{formatted_time}'"
+                        except ValueError:
+                            return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" harus berformat HH:MM:SS'})
                     elif col_type.upper() in ['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'NUMERIC', 'FLOAT', 'REAL']:
                         # Numeric types - validate that it's a number
                         try:
-                            # Try to convert to float to validate it's numeric
+                            # Additional validation for integer ranges
+                            if col_type.upper() == 'TINYINT':
+                                val = int(float(default_value))
+                                if val < 0 or val > 255:
+                                    return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" bertipe TINYINT harus antara 0-255'})
+                            elif col_type.upper() == 'SMALLINT':
+                                val = int(float(default_value))
+                                if val < -32768 or val > 32767:
+                                    return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" bertipe SMALLINT harus antara -32768 hingga 32767'})
+                            elif col_type.upper() == 'INT':
+                                val = int(float(default_value))
+                                if val < -2147483648 or val > 2147483647:
+                                    return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" bertipe INT harus antara -2147483648 hingga 2147483647'})
+                            
+                            # Validate float for decimal types
                             float(default_value)
                             col_def += f" DEFAULT {default_value}"
                         except ValueError:
-                            return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" harus berupa angka'})
+                            return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" harus berupa angka yang valid'})
+                        except OverflowError:
+                            return jsonify({'success': False, 'message': f'Default value untuk kolom "{col_name}" terlalu besar'})
                     else:
                         # For other types, wrap in quotes as string
                         escaped_value = default_value.replace("'", "''")
                         col_def += f" DEFAULT '{escaped_value}'"
+                elif not allow_nulls:
+                    # Jika tidak allow nulls dan tidak ada default value, berikan error
+                    return jsonify({'success': False, 'message': f'Kolom "{col_name}" harus memiliki default value karena tidak mengizinkan NULL'})
 
                 column_definitions.append(col_def)
             
@@ -1555,17 +1567,18 @@ def create_table():
             
             # Execute dan verify dengan handling yang lebih baik
             try:
-                
+                # Insert to MasterCreator first
                 cursor.execute("""
                     INSERT INTO MasterCreator (template_name, division_name, create_date, create_by)
                     VALUES (?, ?, GETDATE(), ?)
                 """, (table_name, divisions, username))
                 
+                # Create the table
                 cursor.execute(create_query)
                 
-                # Tunggu sebentar dan cek apakah tabel benar-benar dibuat
+                # Wait and verify table creation
                 import time
-                time.sleep(0.5)  # Tunggu sebentar untuk memastikan operasi selesai
+                time.sleep(0.5)
                 
                 # Verify table was created successfully
                 cursor.execute("""
@@ -1576,21 +1589,33 @@ def create_table():
                 table_count = cursor.fetchone()[0]
                 
                 if table_count == 0:
-                    # Rollback jika tabel tidak terbuat
                     conn.rollback()
-                    logger.error(f"Table {table_name} was not created successfully")
+                    logger.error(f"Template {table_name} was not created successfully")
                     return jsonify({'success': False, 'message': 'Tabel gagal dibuat. Silakan periksa log database.'})
+                
+                # Verify columns are created correctly
+                cursor.execute("""
+                    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_NAME = ?
+                """, (table_name,))
+                
+                column_count = cursor.fetchone()[0]
+                expected_count = len(columns) + 3  # +3 for id, period_date, upload_date
+                
+                if column_count != expected_count:
+                    logger.warning(f"Template {table_name} created but column count mismatch. Expected: {expected_count}, Actual: {column_count}")
                 
                 # Commit hanya jika verifikasi berhasil
                 conn.commit()
-                logger.info(f"Table {table_name} created and verified successfully")
+                logger.info(f"Template {table_name} created and verified successfully with {column_count} columns")
                 
                 return jsonify({
                     'success': True,
-                    'message': f'Tabel "{table_name}" berhasil dibuat dengan {len(columns)} kolom + 2 kolom otomatis (period_date, upload_date)',
+                    'message': f'Template "{table_name}" berhasil dibuat dengan {column_count} kolom.',
                     'table_name': table_name,
-                    'columns_created': len(columns) + 2,  # +2 for automatic columns
-                    'automatic_columns': ['period_date', 'upload_date'],
+                    'columns_created': len(columns),
+                    'total_columns': column_count,
+                    'automatic_columns': ['id', 'period_date', 'upload_date'],
                     'query': create_query
                 })
                 
@@ -1601,11 +1626,15 @@ def create_table():
                 # Handle specific SQL Server errors
                 error_msg = str(create_error)
                 if "42S01" in error_msg or "2714" in error_msg:
-                    return jsonify({'success': False, 'message': f'Tabel "{table_name}" sudah ada dalam database'})
+                    return jsonify({'success': False, 'message': f'Template "{table_name}" sudah ada dalam database'})
                 elif "2705" in error_msg:
                     return jsonify({'success': False, 'message': 'Nama kolom duplikat atau tidak valid'})
                 elif "102" in error_msg:
-                    return jsonify({'success': False, 'message': 'Syntax error dalam query SQL'})
+                    return jsonify({'success': False, 'message': 'Syntax error dalam query SQL. Periksa tipe data dan default values.'})
+                elif "245" in error_msg:
+                    return jsonify({'success': False, 'message': 'Error konversi tipe data. Periksa default values yang dimasukkan.'})
+                elif "2627" in error_msg:
+                    return jsonify({'success': False, 'message': 'Terdapat duplikasi data atau constraint violation.'})
                 else:
                     return jsonify({'success': False, 'message': f'Error database: {error_msg}'})
             
@@ -1622,163 +1651,118 @@ def create_table():
                 cursor.close()
             if conn:
                 conn.close()
-                
-@app.route('/update-table', methods=['POST'])
-def update_table():
-    """Update an existing table structure"""
+                                
+@app.route('/get-template-details/<template_name>')
+def get_template_details(template_name):
+    """
+    Get detailed information about a template including columns
+    """
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first'})
     
     conn = None
     cursor = None
+    
     try:
-        data = request.get_json()
-        original_table_name = data.get('original_table_name', '').strip()
-        new_table_name = data.get('table_name', '').strip()
-        columns = data.get('columns', [])
-        
-        if not original_table_name or not new_table_name:
-            return jsonify({'success': False, 'message': 'Table name is required'})
-        
-        if not columns:
-            return jsonify({'success': False, 'message': 'At least one column is required'})
-        
         conn = get_db_connection()
         cursor = conn.cursor()
-        conn.autocommit = False
         
-        # Check if original table exists
+        # Get template basic info from MasterCreator
         cursor.execute("""
-            SELECT COUNT(*) FROM sys.tables 
-            WHERE name = ? AND type = 'U'
-        """, (original_table_name,))
+            SELECT mc.template_name, mc.division_name, mc.create_date, mc.create_by
+            FROM MasterCreator mc
+            WHERE mc.template_name = ?
+        """, (template_name,))
         
-        if cursor.fetchone()[0] == 0:
-            return jsonify({'success': False, 'message': f'Table "{original_table_name}" not found'})
+        template_info = cursor.fetchone()
         
-        # If table name changed, check if new name already exists
-        if original_table_name != new_table_name:
-            cursor.execute("""
-                SELECT COUNT(*) FROM sys.tables 
-                WHERE name = ? AND type = 'U'
-            """, (new_table_name,))
+        if not template_info:
+            return jsonify({'success': False, 'message': 'Template not found in MasterCreator'})
+        
+        # Get column information from INFORMATION_SCHEMA
+        cursor.execute("""
+            SELECT 
+                c.COLUMN_NAME,
+                c.DATA_TYPE,
+                c.CHARACTER_MAXIMUM_LENGTH,
+                c.NUMERIC_PRECISION,
+                c.NUMERIC_SCALE,
+                c.IS_NULLABLE,
+                c.COLUMN_DEFAULT,
+                c.ORDINAL_POSITION,
+                CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END as IS_PRIMARY_KEY,
+                CASE WHEN COLUMNPROPERTY(OBJECT_ID(c.TABLE_SCHEMA + '.' + c.TABLE_NAME), c.COLUMN_NAME, 'IsIdentity') = 1 
+                     THEN 1 ELSE 0 END as IS_IDENTITY
+            FROM INFORMATION_SCHEMA.COLUMNS c
+            LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE pk ON 
+                c.TABLE_NAME = pk.TABLE_NAME AND 
+                c.COLUMN_NAME = pk.COLUMN_NAME AND 
+                pk.CONSTRAINT_NAME LIKE 'PK_%'
+            WHERE c.TABLE_NAME = ?
+            ORDER BY c.ORDINAL_POSITION
+        """, (template_name,))
+        
+        columns_raw = cursor.fetchall()
+        
+        if not columns_raw:
+            return jsonify({'success': False, 'message': f'Template "{template_name}" not found in database'})
+        
+        # Format column information
+        columns = []
+        for col in columns_raw:
+            # Format data type display
+            data_type_display = col[1]
+            if col[2] and col[2] != -1:  # CHARACTER_MAXIMUM_LENGTH
+                data_type_display += f"({col[2]})"
+            elif col[3] and col[4] is not None:  # NUMERIC_PRECISION and SCALE
+                data_type_display += f"({col[3]},{col[4]})"
+            elif col[3]:  # NUMERIC_PRECISION only
+                data_type_display += f"({col[3]})"
             
-            if cursor.fetchone()[0] > 0:
-                return jsonify({'success': False, 'message': f'Table "{new_table_name}" already exists'})
-        
-        # For simplicity, we'll create a new table with the updated structure
-        # and copy data from the old table (if structure allows)
-        # This is a simplified approach - in production, you might want more sophisticated ALTER TABLE operations
-        
-        # Create new table with updated structure
-        create_query = f"CREATE TABLE [{new_table_name}_new] (\n"
-        create_query += "    [id] INT IDENTITY(1,1) PRIMARY KEY,\n"
-        
-        column_definitions = []
-        for col in columns:
-            col_name = col.get('name', '').strip()
-            col_type = col.get('type', 'VARCHAR')
-            col_length = col.get('length', '')
-            allow_nulls = col.get('nullable', False)
+            # Clean up default value display
+            default_display = col[6]
+            if default_display:
+                # Remove extra parentheses from SQL Server default values
+                if default_display.startswith('(') and default_display.endswith(')'):
+                    default_display = default_display[1:-1]
+                # Remove quotes from string defaults
+                if default_display.startswith("'") and default_display.endswith("'"):
+                    default_display = default_display[1:-1]
             
-            if not col_name:
-                return jsonify({'success': False, 'message': 'All columns must have a name'})
-            
-            # Validate column name
-            if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', col_name):
-                return jsonify({'success': False, 'message': f'Column name "{col_name}" is invalid'})
-            
-            # Build column definition
-            col_def = f"    [{col_name}] {col_type}"
-            
-            # Add length for applicable types
-            if col_type in ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR'] and col_length:
-                try:
-                    length_val = int(col_length)
-                    if length_val <= 0 or length_val > 8000:
-                        return jsonify({'success': False, 'message': f'Column "{col_name}" length must be between 1-8000'})
-                    col_def += f"({length_val})"
-                except ValueError:
-                    return jsonify({'success': False, 'message': f'Column "{col_name}" length must be numeric'})
-            elif col_type in ['DECIMAL', 'NUMERIC'] and col_length:
-                if ',' in col_length:
-                    try:
-                        precision, scale = col_length.split(',')
-                        precision = int(precision.strip())
-                        scale = int(scale.strip())
-                        if precision < 1 or precision > 38 or scale < 0 or scale > precision:
-                            return jsonify({'success': False, 'message': f'Invalid precision/scale for column "{col_name}"'})
-                        col_def += f"({precision},{scale})"
-                    except ValueError:
-                        return jsonify({'success': False, 'message': f'Invalid precision,scale format for column "{col_name}"'})
-                else:
-                    try:
-                        precision = int(col_length)
-                        if precision < 1 or precision > 38:
-                            return jsonify({'success': False, 'message': f'Invalid precision for column "{col_name}"'})
-                        col_def += f"({precision})"
-                    except ValueError:
-                        return jsonify({'success': False, 'message': f'Precision must be numeric for column "{col_name}"'})
-            
-            col_def += " NULL" if allow_nulls else " NOT NULL"
-            column_definitions.append(col_def)
+            column_info = {
+                'name': col[0],
+                'data_type': data_type_display,
+                'raw_data_type': col[1],
+                'max_length': col[2],
+                'numeric_precision': col[3],
+                'numeric_scale': col[4],
+                'is_nullable': col[5] == 'YES',
+                'default_value': default_display,
+                'raw_default_value': col[6],
+                'ordinal_position': col[7],
+                'is_primary_key': bool(col[8]),
+                'is_identity': bool(col[9])
+            }
+            columns.append(column_info)
         
-        # Tambahkan kembali kolom sistem meskipun tidak dikirim dari frontend
-        existing_col_names = [col.get('name', '').lower() for col in columns]
-
-        if 'period_date' not in existing_col_names:
-            column_definitions.append("    [period_date] DATE NULL")
-        if 'upload_date' not in existing_col_names:
-            column_definitions.append("    [upload_date] DATETIME NOT NULL DEFAULT GETDATE()")
-
-        
-        create_query += ",\n".join(column_definitions)
-        create_query += "\n)"
-        
-        # Execute create new table
-        cursor.execute(create_query)
-        
-        # Ambil nama kolom yang sama antara old dan new table
-        cursor.execute(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ?", (original_table_name,))
-        old_columns = set([row[0].lower() for row in cursor.fetchall()])
-        new_columns = set([line.split()[0].strip("[]").lower() for line in column_definitions])
-
-        common_columns = list(old_columns & new_columns)
-        if common_columns:
-            common_columns_str = ', '.join(f"[{col}]" for col in common_columns)
-            insert_query = f"""
-                INSERT INTO [{new_table_name}_new] ({common_columns_str})
-                SELECT {common_columns_str} FROM [{original_table_name}]
-            """
-            cursor.execute(insert_query)
-            logger.info(f"{cursor.rowcount} row(s) copied from {original_table_name} to {new_table_name}_new")
-        else:
-            logger.warning("No common columns between old and new table, data not copied.")
-
-        
-        # Drop old table and rename new one
-        cursor.execute(f"DROP TABLE [{original_table_name}]")
-        cursor.execute(f"EXEC sp_rename '[{new_table_name}_new]', '{new_table_name}'")
-        
-        conn.commit()
+        template_details = {
+            'name': template_info[0],
+            'division': template_info[1],
+            'create_date': template_info[2].strftime('%Y-%m-%d %H:%M:%S') if template_info[2] else None,
+            'created_by': template_info[3],
+            'total_columns': len(columns),
+            'user_columns': len([c for c in columns if c['name'] not in ['id', 'period_date', 'upload_date']]),
+            'columns': columns
+        }
         
         return jsonify({
             'success': True,
-            'message': f'Table "{new_table_name}" updated successfully',
-            'table_name': new_table_name
+            'template': template_details
         })
         
     except Exception as e:
-        if conn:
-            try:
-                conn.rollback()
-            except:
-                pass
-        logger.error(f"Error updating table: {str(e)}")
-        return jsonify({
-            'success': False,
-            'message': f'Error updating table: {str(e)}'
-        })
+        logger.error(f"Error getting template details for {template_name}: {str(e)}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
     finally:
         if cursor:
             cursor.close()
@@ -1871,7 +1855,214 @@ def delete_table():
     except Exception as e:
         logger.error(f"Error in delete_table: {str(e)}")
         return jsonify({'success': False, 'message': f'Error: {str(e)}'})
-                
+
+# CRUD Users Management - Simplified Backend Code (Create & Delete Only)
+# Register route
+@app.route('/users', methods=['GET', 'POST'])
+def handle_users():
+    if 'username' not in session:
+        flash('Please log in first.')
+        return redirect(url_for('login'))
+
+    if request.method == 'GET':
+        # Jika browser meminta HTML (bukan fetch/ajax)
+        if request.headers.get('Accept', '').startswith('text/html'):
+            return render_template(
+                'users_management.html',
+                username=session.get('username'),
+                fullname=session.get('fullname'),
+                division=session.get('division'),
+                role_access=session.get('role_access')
+            )
+
+        # Jika permintaan fetch() dari JavaScript, balas JSON
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, username, role_access, 
+                    fullname, email, division
+                FROM MasterUsers
+                ORDER BY created_date DESC
+            """)
+            
+            rows = cursor.fetchall()
+            columns = [column[0] for column in cursor.description]
+            users = [dict(zip(columns, row)) for row in rows]
+
+            return jsonify({'success': True, 'users': users})
+
+        except Exception as e:
+            return jsonify({'success': False, 'message': str(e)})
+
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
+    elif request.method == 'POST':
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        password_confirm = data.get('password_confirm')
+        role_access = data.get('role_access')
+        fullname = data.get('fullname')
+        email = data.get('email')
+        division = data.get('division')
+        created_date = datetime.now()
+
+        required_fields = [username, password, password_confirm, role_access, fullname, email, division]
+        if not all(required_fields):
+            return jsonify({'success': False, 'message': 'Please fill in all fields.'})
+
+        if password != password_confirm:
+            return jsonify({'success': False, 'message': 'Passwords do not match.'})
+
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            cur.execute("SELECT id FROM MasterUsers WHERE username = ?", (username,))
+            if cur.fetchone():
+                return jsonify({'success': False, 'message': 'Username already exists.'})
+
+            cur.execute("SELECT id FROM MasterUsers WHERE email = ?", (email,))
+            if cur.fetchone():
+                return jsonify({'success': False, 'message': 'Email is already registered.'})
+
+            password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+
+            cur.execute("""
+                INSERT INTO MasterUsers (username, password_hash, role_access, fullname, email, division, created_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (username, password_hash, role_access, fullname, email, division, created_date))
+
+            conn.commit()
+            return jsonify({
+                'success': True, 
+                'message': f'User "{username}" created successfully.'
+                })
+
+        except Exception as e:
+            return jsonify({'success': False, 'message': str(e)})
+
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
+@app.route('/users/<int:id>', methods=['GET'])
+def get_user_by_id(id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, username, fullname, email, division, role_access
+            FROM MasterUsers WHERE id = ?
+        """, (id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'success': False, 'message': 'User not found'})
+        user = dict(zip([desc[0] for desc in cur.description], row))
+        return jsonify({'success': True, 'user': user})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route('/users/<int:id>', methods=['PUT'])
+def update_user(id):
+    if 'username' not in session:
+        flash('Please log in first.')
+        return redirect(url_for('login'))
+
+    try:
+        data = request.get_json()
+
+        username = data.get('username')
+        fullname = data.get('fullname')
+        email = data.get('email')
+        division = data.get('division')
+        role_access = data.get('role_access')
+
+        if not all([username, fullname, email, division, role_access]):
+            return jsonify({'success': False, 'message': 'All fields are required'})
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Check if user exists
+        cursor.execute("SELECT id FROM MasterUsers WHERE id = ?", (id,))
+        if not cursor.fetchone():
+            return jsonify({'success': False, 'message': 'User not found'})
+
+        # Check if username is taken by another user
+        cursor.execute("SELECT id FROM MasterUsers WHERE username = ? AND id != ?", (username, id))
+        if cursor.fetchone():
+            return jsonify({'success': False, 'message': 'Username already exists'})
+
+        # Check if email is taken by another user
+        cursor.execute("SELECT id FROM MasterUsers WHERE email = ? AND id != ?", (email, id))
+        if cursor.fetchone():
+            return jsonify({'success': False, 'message': 'Email is already registered'})
+
+        cursor.execute("""
+            UPDATE MasterUsers
+            SET username = ?, fullname = ?, email = ?, division = ?, role_access = ?
+            WHERE id = ?
+        """, (username, fullname, email, division, role_access, id))
+
+        conn.commit()
+        return jsonify({
+            'success': True, 
+            'message': f'User "{username}" updated successfully'
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+@app.route('/users/<int:id>', methods=['DELETE'])
+def delete_user(id):
+    if 'username' not in session:
+        flash('Please log in first.')
+        return redirect(url_for('login'))
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get division name before deletion
+        cursor.execute("SELECT username FROM MasterUsers WHERE id = ?", (id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            return jsonify({'success': False, 'message': 'User not found'})
+        
+        username = result[0]
+        
+        # Delete the division
+        cursor.execute("DELETE FROM MasterUsers WHERE id = ?", (id,))
+        conn.commit()
+        
+        return jsonify({'success': True, 'message': f'User: "{username}" deleted successfully'})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+             
 # CRUD Divisions Management - Simplified Backend Code (Create & Delete Only)
 @app.route('/divisions-page')
 def divisions_page():
@@ -1889,9 +2080,6 @@ def divisions_page():
 
 @app.route('/divisions', methods=['GET'])
 def get_divisions():
-    if 'username' not in session:
-        return jsonify({'success': False, 'message': 'Please log in first'})
-
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -1917,30 +2105,60 @@ def get_divisions():
         if conn:
             conn.close()
 
+# Separate endpoint for dropdown options (simple format)
+@app.route('/divisions/dropdown', methods=['GET'])
+def get_divisions_dropdown():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT division_name FROM MasterDivisions WHERE division_name IS NOT NULL ORDER BY division_name")
+        rows = cursor.fetchall()
+        divisions = [r[0] for r in rows]
+        
+        return jsonify({'success': True, 'divisions': divisions})
+        
+    except Exception as e:
+        print(f"Error in get_divisions_dropdown: {str(e)}")
+        return jsonify({'success': False, 'message': f'Failed to load divisions: {str(e)}'})
+    
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 @app.route('/divisions', methods=['POST'])
 def create_division():
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first'})
 
+    conn = None
+    cursor = None
+    
     try:
         data = request.get_json()
         division_name = data.get('division_name', '').strip()
         created_by = session.get('username')
 
         if not division_name:
-            return jsonify({'success': False, 'message': 'Division name is required'})
+            return jsonify({'success': False, 'message': 'Nama divisi harus diisi'})
+
+        # Validate division name format
+        if not re.match(r'^[a-zA-Z0-9\s_-]+$', division_name):
+            return jsonify({'success': False, 'message': 'Nama divisi hanya boleh mengandung huruf, angka, spasi, underscore, dan dash'})
 
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Check if division name already exists
+        # Check if division name already exists (case insensitive)
         cursor.execute("""
             SELECT COUNT(*) FROM MasterDivisions 
             WHERE LOWER(division_name) = LOWER(?)
         """, (division_name,))
         
         if cursor.fetchone()[0] > 0:
-            return jsonify({'success': False, 'message': 'Division name already exists'})
+            return jsonify({'success': False, 'message': f'Nama divisi "{division_name}" sudah ada'})
 
         # Insert new division
         cursor.execute("""
@@ -1949,10 +2167,25 @@ def create_division():
         """, (division_name, created_by))
         
         conn.commit()
-        return jsonify({'success': True, 'message': f'Division "{division_name}" created successfully'})
+        
+        # Log successful creation
+        logger.info(f"Division '{division_name}' created successfully by {created_by}")
+        
+        return jsonify({
+            'success': True, 
+            'message': f'Divisi "{division_name}" berhasil dibuat',
+            'division_name': division_name
+        })
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+        if conn:
+            try:
+                conn.rollback()
+            except:
+                pass
+        logger.error(f"Error creating division: {str(e)}")
+        return jsonify({'success': False, 'message': f'Terjadi kesalahan: {str(e)}'})
+        
     finally:
         if cursor:
             cursor.close()
@@ -2070,40 +2303,78 @@ def get_existing_tables():
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Not authenticated'})
 
+    conn = None
+    cursor = None
+    
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Ambil hanya data template dari MasterCreator
-        cursor.execute("""
-            SELECT 
-                template_name,
-                division_name,
-                create_date,
-                create_by
-            FROM MasterCreator
-            ORDER BY create_date DESC
-        """)
-        templates = cursor.fetchall()
+        # Get user role and division for filtering
+        role_access = session.get('role_access')
+        user_division = session.get('division')
 
-        # Bangun response
+        # Build query based on role
+        if role_access == 'admin':
+            # Admin can see all templates
+            query = """
+                SELECT 
+                    template_name,
+                    division_name,
+                    create_date,
+                    create_by
+                FROM MasterCreator
+                ORDER BY create_date DESC
+            """
+            cursor.execute(query)
+        else:
+            # Non-admin users can only see their division's templates
+            query = """
+                SELECT 
+                    template_name,
+                    division_name,
+                    create_date,
+                    create_by
+                FROM MasterCreator
+                WHERE division_name = ?
+                ORDER BY create_date DESC
+            """
+            cursor.execute(query, (user_division,))
+
+        templates = cursor.fetchall()
+        
+        # Log for debugging
+        logger.info(f"Found {len(templates)} templates for user {session.get('username')}")
+
+        # Build response
         tables = []
         for template in templates:
-            tables.append({
+            table_data = {
                 'name': template[0],
                 'division': template[1],
                 'create_date': template[2].strftime('%Y-%m-%d %H:%M:%S') if template[2] else 'N/A',
                 'create_by': template[3]
-            })
+            }
+            tables.append(table_data)
+            logger.debug(f"Added template: {table_data}")
 
-        cursor.close()
-        conn.close()
-
-        return jsonify({'success': True, 'tables': tables})
+        return jsonify({
+            'success': True, 
+            'tables': tables,
+            'count': len(tables)
+        })
 
     except Exception as e:
         logger.error(f"Error getting existing tables: {str(e)}")
-        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+        return jsonify({
+            'success': False, 
+            'message': f'Database error: {str(e)}'
+        })
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 @app.route('/get-table-details/<table_name>', methods=['GET'])
 def get_table_details(table_name):

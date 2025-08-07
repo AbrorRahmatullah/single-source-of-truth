@@ -19,7 +19,7 @@ body {
 /* Sidebar */
 .sidebar {
     width: var(--sidebar-width);
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    background: linear-gradient(135deg, #188bb5 0%, #2596be 100%);
     color: white;
     position: fixed;
     height: 100vh;
@@ -48,10 +48,11 @@ body {
     display: flex;
     align-items: center;
     padding: 12px 20px;
-    color: rgba(255, 255, 255, 0.8);
+    color: rgb(255, 255, 255);
     text-decoration: none;
     transition: all 0.3s ease;
     border-left: 3px solid transparent;
+    font-size: 17px;
 }
 
 .menu-item:hover {
@@ -219,14 +220,14 @@ body {
 .card-title {
     font-size: 1.25rem;
     font-weight: 600;
-    color: #1e293b;
+    color: #000000;
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
 .card-title-icon {
-    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    background: linear-gradient(135deg, #fcfcfc, #ffffff);
     color: white;
     width: 24px;
     height: 24px;
@@ -733,7 +734,7 @@ body {
 }
 
 .modal-header {
-    background-color: #dc3545;
+    background-color: #35a7dc;
     color: white;
     padding: 15px 20px;
     border-bottom: 1px solid #ddd;

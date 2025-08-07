@@ -1,0 +1,53 @@
+<div class="modal fade" id="createUserModal" tabindex="-1" aria-labelledby="createUserModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="createUserForm">
+        <div class="modal-header">
+          <h5 class="modal-title" id="createUserModalLabel">Create User</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="username" class="form-label">Username *</label>
+            <input type="text" class="form-control" id="username" name="username" required>
+          </div>
+          <div class="mb-3">
+            <label for="password" class="form-label">Password *</label>
+            <input type="password" class="form-control" id="password" name="password" required>
+          </div>
+          <div class="mb-3">
+            <label for="password_confirm" class="form-label">Confirm Password *</label>
+            <input type="password" class="form-control" id="password_confirm" name="password_confirm" required>
+          </div>
+          <div class="mb-3">
+            <label for="fullname" class="form-label">Full Name *</label>
+            <input type="text" class="form-control" id="fullname" name="fullname" required>
+          </div>
+          <div class="mb-3">
+            <label for="email" class="form-label">Email *</label>
+            <input type="email" class="form-control" id="email" name="email" required>
+          </div>
+          <div class="mb-3">
+            <label for="division" class="form-label">Division *</label>
+            <select id="division" name="division" class="form-control form-select" required>
+              <option value="" disabled selected>Select division</option>
+              <!-- Options will be populated dynamically -->
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="role_access" class="form-label">Role *</label>
+            <select id="role_access" name="role_access" class="form-control form-select" required>
+              <option value="" disabled selected>Select role</option>
+              <option value="admin">Admin</option>
+              <option value="user">User</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

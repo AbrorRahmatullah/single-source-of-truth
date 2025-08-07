@@ -1,0 +1,330 @@
+{% extends "header.html" %}
+
+{% block title %}Users Management{% endblock %}
+
+{% block content %}
+<!-- Sidebar -->
+{% include 'sidebar.html' %}
+
+<!-- Main Content -->
+<div class="main-content">
+    <div class="content">
+        <div class="content-header">
+            <h2 class="content-title">Users Management</h2>
+            <p class="content-subtitle">Create, update, and delete user accounts</p>
+        </div>
+
+        <!-- Users Table -->
+        <div class="card mt-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3 class="card-title mb-0">
+                    <span>👤</span> Users Data
+                </h3>
+                <button class="btn btn-success btn-sm" onclick="showCreateUserModal()">
+                    <i class="fas fa-user-plus"></i> Create User
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table id="usersDataTable" class="table table-striped table-bordered" style="width:100%">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Full Name</th>
+                                <th>Email</th>
+                                <th>Division</th>
+                                <th>Role</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Populated via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {% include 'modals/create_user_modal.html' %}
+        {% include 'modals/edit_user_modal.html' %}
+    </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+<script>
+    function showAlert(type, message) {
+        // Remove existing alerts
+        $('.alert').remove();
+        
+        const alertClass = type === 'success' ? 'alert-success' : type === 'warning' ? 'alert-warning' : 'alert-danger';
+        const alertIcon = type === 'success' ? '✅' : type === 'warning' ? '⚠️' : '❌';
+        
+        const alert = $(`
+            <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+                ${alertIcon} ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        `);
+        
+        // Insert alert at the top of the main content
+        $('.main-content').prepend(alert);
+        
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+            alert.alert('close');
+        }, 5000);
+    }
+
+    function showSuccessModal(itemName, itemType, action = 'created') {
+        // Create success modal if it doesn't exist
+        let successModal = document.getElementById('successModal');
+        if (!successModal) {
+            createSuccessModal();
+            successModal = document.getElementById('successModal');
+        }
+        
+        // Update modal content
+        const modalMessage = document.getElementById('successModalMessage');
+        let actionText;
+        
+        switch(action) {
+            case 'deleted':
+                actionText = 'deleted and verified successfully';
+                break;
+            case 'updated':
+                actionText = 'updated and verified successfully';
+                break;
+            case 'created':
+            default:
+                actionText = 'created and verified successfully';
+                break;
+        }
+        
+        modalMessage.innerHTML = `${itemType} <strong>${itemName}</strong> ${actionText}`;
+        
+        // Show the modal
+        const modal = new bootstrap.Modal(successModal);
+        modal.show();
+        
+        // Auto-hide after 3 seconds
+        setTimeout(() => {
+            modal.hide();
+        }, 3000);
+    }
+
+    function loadUsers() {
+        fetch('/users')
+            .then(res => res.json())
+            .then(data => {
+                const table = $('#usersDataTable').DataTable();
+                table.clear();
+                data.users.forEach(u => {
+                    table.row.add([
+                        u.username,
+                        u.fullname,
+                        u.email,
+                        u.division,
+                        u.role_access,
+                        `<button class="btn btn-sm btn-warning" onclick="editUser(${u.id})">Edit</button>
+                         <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id}, '${u.username}')">Delete</button>`
+                    ]);
+                });
+                table.draw();
+            });
+    }
+
+
+    function showCreateUserModal() {
+        document.getElementById('createUserForm').reset();
+        loadDivisionsDropdown('division'); // Perbaiki ID yang benar
+        new bootstrap.Modal(document.getElementById('createUserModal')).show();
+    }
+
+    function createSuccessModal() {
+        // Create success modal HTML
+        const successModalHTML = `
+            <div class="modal fade" id="successModal" tabindex="-1" aria-labelledby="successModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header bg-success text-white">
+                            <h5 class="modal-title" id="successModalLabel">✅ Success</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p id="successModalMessage" class="mb-0"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Append to body if not exists
+        if (!document.getElementById('successModal')) {
+            document.body.insertAdjacentHTML('beforeend', successModalHTML);
+        }
+    }
+
+
+    function editUser(id) {
+        fetch(`/users/${id}`)
+            .then(res => res.json())
+            .then(data => {
+                const u = data.user;
+                if (!u) return showAlert('danger', 'User not found');
+
+                document.getElementById('edit_user_id').value = u.id;
+                document.getElementById('edit_username').value = u.username;
+                document.getElementById('edit_fullname').value = u.fullname;
+                document.getElementById('edit_email').value = u.email;
+
+                loadDivisionsDropdown('edit_division'); // Load dropdown dulu
+                setTimeout(() => {
+                    document.getElementById('edit_division').value = u.division;
+                    document.getElementById('edit_role').value = u.role_access;
+                    new bootstrap.Modal(document.getElementById('editUserModal')).show();
+                }, 200); // Delay kecil agar dropdown sempat terisi
+            })
+            .catch(error => {
+                console.error('Error fetching user:', error);
+                showAlert('danger', 'Error loading user data');
+            });
+    }
+
+
+    function loadDivisionsDropdown(targetSelectId) {
+        fetch('/divisions/dropdown')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const targetSelect = document.getElementById(targetSelectId);
+                
+                if (!targetSelect) {
+                    console.error(`Element with ID '${targetSelectId}' not found`);
+                    return;
+                }
+                
+                // Clear existing options
+                targetSelect.innerHTML = '<option value="" disabled selected>Select division</option>';
+                
+                // Add division options
+                data.divisions.forEach(division => {
+                    const option = `<option value="${division}">${division}</option>`;
+                    targetSelect.innerHTML += option;
+                });
+            }
+        })
+        .catch(error => console.error('Error loading divisions:', error));
+    }
+
+
+    document.getElementById('editUserForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(this);
+        const id = formData.get('id');
+        const data = {
+            username: formData.get('username'),
+            fullname: formData.get('fullname'),
+            email: formData.get('email'),
+            division: formData.get('division'),
+            role_access: formData.get('role_access')
+        };
+
+        // Validation
+        if (!Object.values(data).every(value => value && value.trim())) {
+            showAlert('danger', 'All fields are required');
+            return;
+        }
+
+        fetch(`/users/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(res => res.json())
+        .then(r => {
+            if (r.success) {
+                bootstrap.Modal.getInstance(document.getElementById('editUserModal')).hide();
+                showSuccessModal(data.username, 'User', 'updated'); // Menggunakan action 'updated'
+                loadUsers();
+            } else {
+                showAlert('danger', r.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error updating user:', error);
+            showAlert('danger', 'Error updating user');
+        });
+    });
+
+    document.getElementById('createUserForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const data = Object.fromEntries(formData.entries());
+
+        if (data.password !== data.password_confirm) {
+            showAlert('danger', 'Passwords do not match');
+            return;
+        }
+
+        fetch('/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(res => res.json())
+        .then(r => {
+            if (r.success) {
+                bootstrap.Modal.getInstance(document.getElementById('createUserModal')).hide();
+                showSuccessModal(data.username, 'User', 'created');
+                loadUsers();
+            } else {
+                showAlert('danger', r.message);
+            }
+        });
+    });
+
+    function deleteUser(id, username) {
+        if (!confirm(`Delete user "${username}"?`)) return;
+        fetch(`/users/${id}`, { method: 'DELETE' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('success', data.message);
+                    loadUsers();
+                } else {
+                    showAlert('danger', data.message);
+                }
+            });
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        $('#usersDataTable').DataTable({
+            "pageLength": 10,
+            "responsive": true,
+            "language": {
+                "emptyTable": "No users found",
+                "info": "Showing _START_ to _END_ of _TOTAL_ users",
+                "infoEmpty": "Showing 0 to 0 of 0 users",
+                "search": "Search users:",
+                "paginate": {
+                    "first": "First",
+                    "last": "Last",
+                    "next": "Next",
+                    "previous": "Previous"
+                }
+            },
+            "columnDefs": [
+                { "orderable": false, "targets": 5 } // Disable sorting on Actions column
+            ]
+        });
+        
+        // Load users data
+        loadUsers();
+        
+        // Load divisions for create modal (pre-load)
+        loadDivisionsDropdown('division');
+    });
+</script>
+{% endblock %}

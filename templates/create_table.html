@@ -12,7 +12,7 @@
         <div class="content">
             <div class="content-header">
                 <h2 class="content-title">Create Database Template</h2>
-                <p class="content-subtitle">Create new tables (templates) in SQL Server database with custom columns and data types</p>
+                <p class="content-subtitle">Create new templates in SQL Server database with custom columns and data types</p>
             </div>
 
             <div class="card">
@@ -28,8 +28,10 @@
                         <ul>
                             <li><strong>ID Column:</strong> Kolom ID (Primary Key) akan otomatis ditambahkan</li>
                             <li><strong>Template Name:</strong> Hanya huruf, angka, dan underscore. Dimulai dengan huruf</li>
+                            <li><strong>Column Name:</strong> Penamaan kolom tidak boleh menggunakan spasi</li>
                             <li><strong>Column Length:</strong> Untuk VARCHAR/CHAR (1-8000), untuk DECIMAL (precision atau precision,scale)</li>
                             <li><strong>Data Types:</strong> Pilih tipe data sesuai kebutuhan kolom</li>
+                            <li><strong>Default Value:</strong> Wajib diisi jika Allow Nulls tidak dicentang</li>
                         </ul>
                     </div>
 
@@ -44,8 +46,11 @@
                             </div>
                             <div class="form-group">
                                 <label for="column_count" class="form-label">Jumlah Kolom</label>
-                                <input type="number" id="column_count" name="column_count" class="form-control" min="1" max="50" placeholder="Masukkan jumlah kolom (contoh: 5)" required>
-                                <!--<div class="form-text">Setelah diisi, kolom input akan muncul otomatis di bawah ini</div> -->
+                                <input type="number" id="column_count" name="column_count" class="form-control" 
+                                    min="1" max="50" placeholder="Masukkan jumlah kolom minimal 1" required>
+                                <div id="columnCountError" class="form-text text-danger" style="display: none;">
+                                    ⚠️ Jumlah kolom tidak boleh kurang dari 1
+                                </div>
                             </div>
                             <div class="form-group">
                                 <label for="divisions" class="form-label">Divisi</label>
@@ -62,7 +67,7 @@
                             </div>
                         </div>
                         <div class="form-group">
-                            <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#createTemplateModal">
+                            <button type="button" id="createTemplateBtn" class="btn btn-secondary" data-bs-toggle="modal" data-bs-target="#createTemplateModal" disabled>
                                 <span>➕</span> Create Template
                             </button>
                         </div>
@@ -70,7 +75,7 @@
 
                     <div class="loading" id="loading">
                         <div class="spinner"></div>
-                        <p>Membuat template database...</p>
+                        <p>Membuat template...</p>
                     </div>
 
                     <div class="result" id="result">
@@ -114,6 +119,27 @@
         </div>
     </div>
 
+    <div class="modal fade" id="detailTemplateModal" tabindex="-1" aria-labelledby="detailTemplateModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="detailTemplateModalLabel">
+                        <i class="fas fa-info-circle"></i> Template Details
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="templateDetailsContent">
+                        <!-- Content will be populated dynamically -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal fade" id="createTemplateModal" tabindex="-1" aria-labelledby="createTemplateModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -150,13 +176,12 @@
         </div>
     </div>
 
-
     <div class="modal fade" id="editTableModal" tabindex="-1" aria-labelledby="editTableModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="editTableModalLabel">
-                        <i class="fas fa-edit"></i> Edit Table/Template
+                        <i class="fas fa-edit"></i> Edit Template
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -164,7 +189,7 @@
                     <form id="editTableForm">
                         <input type="hidden" id="edit_table_id" name="table_id">
                         <div class="mb-3">
-                            <label for="edit_table_name" class="form-label">Table Name</label>
+                            <label for="edit_table_name" class="form-label">Template Name</label>
                             <input type="text" class="form-control" id="edit_table_name" name="table_name" required>
                         </div>
                         <div class="mb-3">
@@ -199,8 +224,8 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p>Are you sure you want to delete this template or table?</p>
-                    <p><strong>Table Name:</strong> <span id="deleteTableName"></span></p>
+                    <p>Are you sure you want to delete this template?</p>
+                    <p><strong>Template Name:</strong> <span id="deleteTableName"></span></p>
                     <p class="text-danger"><small><i class="fas fa-warning"></i> This action cannot be undone!</small></p>
                 </div>
                 <div class="modal-footer">
@@ -229,27 +254,70 @@
         let currentTableToDelete = null;
 
         $(document).ready(function() {
+            console.log('DOM ready - initializing...');
             
-            // Load existing tables on page load
-            loadExistingTables();
+            // Initialize DataTables first
+            setTimeout(() => {
+                initializeDataTables();
+            }, 100);
             
-            // Set up event listeners
+            // Set up other event listeners
             setupEventListeners();
         });
 
         function setupEventListeners() {
-            // Column count change event
+            // Column count change event with validation
             $('#column_count').on('input', function() {
                 const count = parseInt($(this).val());
-                if (count > 0) {
-                    updateTemplateColumnCount(count);
+                
+                // If input is empty or invalid, treat as 0
+                if (isNaN(count) || $(this).val().trim() === '') {
+                    validateColumnCount(0);
+                } else {
+                    validateColumnCount(count);
+                }
+                validateCreateTemplateForm();
+            });
+            
+            // Also validate on blur to catch edge cases
+            $('#column_count').on('blur', function() {
+                const count = parseInt($(this).val());
+                if (isNaN(count) || count < 1) {
+                    $(this).val(''); // Clear invalid input
+                    validateColumnCount(0);
+                    validateCreateTemplateForm();
                 }
             });
             
             // Table name validation
             $('#table_name').on('input', function() {
                 validateTableName($(this).val());
+                validateCreateTemplateForm();
             });
+            
+            // Division change validation
+            $('#divisions').on('change', function() {
+                validateCreateTemplateForm();
+            });
+        }
+
+        function validateColumnCount(count) {
+            const errorDiv = $('#columnCountError');
+            const input = $('#column_count');
+            
+            // Check if count is less than 1 or NaN
+            if (count < 1 || isNaN(count) || count === 0) {
+                errorDiv.show().text('⚠️ Jumlah kolom tidak boleh kurang dari 1');
+                input.addClass('is-invalid');
+                return false;
+            } else {
+                errorDiv.hide();
+                input.removeClass('is-invalid');
+                if (count > 0) {
+                    updateTemplateColumnCount(count);
+                }
+                return true;
+            }
         }
 
         function updateTemplateColumnCount(count) {
@@ -285,7 +353,7 @@
 
             // Tidak boleh mengandung kata ssot_ (case insensitive)
             if (/ssot_/i.test(tableName)) {
-                checkElement.text('❌ Nama tabel tidak boleh mengandung kata "ssot_"').removeClass('text-success').addClass('text-danger');
+                checkElement.text('❌ Nama template tidak boleh mengandung kata "ssot_"').removeClass('text-success').addClass('text-danger');
                 return;
             }
 
@@ -304,33 +372,39 @@
             const row = $(`
                 <tr>
                     <td>
-                        <input type="text" class="form-control form-control-sm" 
-                            placeholder="column_name_${index}" required>
+                        <input type="text" class="form-control form-control-sm column-name-input" 
+                            placeholder="column_name_${index}" required data-index="${index}">
+                        <div class="column-name-error text-danger" style="display: none; font-size: 0.8em;">
+                            ❌ Nama kolom tidak boleh menggunakan spasi
+                        </div>
                     </td>
                     <td>
-                        <select class="form-control form-control-sm" required>
-                            <option value="">-- Pilih --</option>
-                            <option value="VARCHAR">VARCHAR</option>
-                            <option value="NVARCHAR">NVARCHAR</option>
+                        <select class="form-select" onchange="toggleDefaultValue(this)">
+                            <option value="VARCHAR(255)">VARCHAR(255)</option>
                             <option value="INT">INT</option>
-                            <option value="BIGINT">BIGINT</option>
-                            <option value="DECIMAL">DECIMAL</option>
-                            <option value="FLOAT">FLOAT</option>
-                            <option value="DATE">DATE</option>
                             <option value="DATETIME">DATETIME</option>
-                            <option value="BIT">BIT</option>
+                            <option value="NUMERIC(36,2)">NUMERIC(36,2)</option>
+                            <option value="DECIMAL(10,2)">DECIMAL(10,2)</option>
                             <option value="TEXT">TEXT</option>
+                            <option value="BIT">BIT</option>
+                            <option value="DATE">DATE</option>
+                            <option value="TIME(7)">TIME</option>
+                            <option value="FLOAT">FLOAT</option>
                         </select>
                     </td>
                     <td>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="null_${index}">
+                            <input class="form-check-input allow-null-checkbox" type="checkbox" id="null_${index}" 
+                                onchange="toggleDefaultValueBasedOnNull(this)">
                             <label class="form-check-label" for="null_${index}">Allow NULL</label>
                         </div>
                     </td>
                     <td>
-                        <input type="text" class="form-control form-control-sm" 
-                            placeholder="Default value (optional)">
+                        <input type="text" class="form-control form-control-sm default-value-input" 
+                            placeholder="Default value (required)" required>
+                        <div class="default-value-error text-danger" style="display: none; font-size: 0.8em;">
+                            ❌ Default value wajib diisi jika Allow NULL tidak dicentang
+                        </div>
                     </td>
                     <td>
                         <button type="button" class="btn btn-danger btn-sm" onclick="removeTemplateRow(this)">
@@ -341,44 +415,262 @@
             `);
             
             tbody.append(row);
+
+            // Add validation for column name (no spaces)
+            row.find('.column-name-input').on('input', function() {
+                validateColumnNameSpacing(this);
+                validateSaveTemplateButton();
+            });
+            
+            // Add validation for default value requirement
+            row.find('.default-value-input').on('input', function() {
+                validateDefaultValue(this);
+                validateSaveTemplateButton();
+            });
+        }
+
+        function validateColumnNameSpacing(input) {
+            const value = $(input).val();
+            const errorDiv = $(input).siblings('.column-name-error');
+            
+            if (value.includes(' ')) {
+                errorDiv.show();
+                $(input).addClass('is-invalid');
+                return false;
+            } else {
+                errorDiv.hide();
+                $(input).removeClass('is-invalid');
+                return true;
+            }
+        }
+
+        // Toggle default value berdasarkan Allow NULL
+        function toggleDefaultValueBasedOnNull(checkbox) {
+            const row = $(checkbox).closest('tr');
+            const defaultValueInput = row.find('.default-value-input');
+            const defaultValueError = row.find('.default-value-error');
+            
+            if ($(checkbox).is(':checked')) {
+                // Allow NULL dicentang - default value tidak wajib dan bisa dikosongkan
+                defaultValueInput.prop('required', false);
+                defaultValueInput.prop('disabled', true);
+                defaultValueInput.val('');
+                defaultValueInput.attr('placeholder', 'Not required (NULL allowed)');
+                defaultValueError.hide();
+                defaultValueInput.removeClass('is-invalid');
+            } else {
+                // Allow NULL tidak dicentang - default value wajib diisi
+                defaultValueInput.prop('required', true);
+                defaultValueInput.prop('disabled', false);
+                defaultValueInput.attr('placeholder', 'Default value (required)');
+                validateDefaultValue(defaultValueInput[0]);
+            }
+            
+            validateSaveTemplateButton();
+        }
+
+        // Validasi default value
+        function validateDefaultValue(input) {
+            const row = $(input).closest('tr');
+            const allowNullCheckbox = row.find('.allow-null-checkbox');
+            const errorDiv = row.find('.default-value-error');
+            const value = $(input).val().trim();
+            
+            // Jika Allow NULL dicentang, tidak perlu validasi
+            if (allowNullCheckbox.is(':checked')) {
+                errorDiv.hide();
+                $(input).removeClass('is-invalid');
+                return true;
+            }
+            
+            // Jika Allow NULL tidak dicentang, default value wajib diisi
+            if (!value) {
+                errorDiv.show();
+                $(input).addClass('is-invalid');
+                return false;
+            } else {
+                errorDiv.hide();
+                $(input).removeClass('is-invalid');
+                return true;
+            }
+        }
+
+        // Validasi tombol Save Template
+        function validateSaveTemplateButton() {
+            const rows = $('#templateColumnsTable tbody tr');
+            let isValid = true;
+            
+            rows.each(function() {
+                const columnNameInput = $(this).find('.column-name-input');
+                const defaultValueInput = $(this).find('.default-value-input');
+                const allowNullCheckbox = $(this).find('.allow-null-checkbox');
+                
+                // Validasi nama kolom (tidak boleh ada spasi)
+                if (columnNameInput.val().includes(' ')) {
+                    isValid = false;
+                    return false;
+                }
+                
+                // Validasi default value jika Allow NULL tidak dicentang
+                if (!allowNullCheckbox.is(':checked') && !defaultValueInput.val().trim()) {
+                    isValid = false;
+                    return false;
+                }
+            });
+            
+            // Update tombol Save Template di modal
+            const saveButton = $('.modal-footer button[onclick="saveTemplateColumns()"]');
+            if (isValid) {
+                saveButton.prop('disabled', false);
+                saveButton.removeClass('btn-secondary').addClass('btn-success');
+            } else {
+                saveButton.prop('disabled', true);
+                saveButton.removeClass('btn-success').addClass('btn-secondary');
+            }
+        }
+
+        // Fungsi untuk menampilkan detail template
+        function viewTemplateDetails(tableName) {
+            // Show loading state
+            $('#detailTemplateModalLabel').html('<i class="fas fa-spinner fa-spin"></i> Loading Details...');
+            $('#templateDetailsContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>');
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('detailTemplateModal'));
+            modal.show();
+            
+            // Fetch template details
+            fetch(`/get-template-details/${encodeURIComponent(tableName)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayTemplateDetails(data.template);
+                    } else {
+                        $('#templateDetailsContent').html(`
+                            <div class="alert alert-danger">
+                                <i class="fas fa-exclamation-triangle"></i> Error: ${data.message}
+                            </div>
+                        `);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading template details:', error);
+                    $('#templateDetailsContent').html(`
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-triangle"></i> Failed to load template details
+                        </div>
+                    `);
+                })
+                .finally(() => {
+                    $('#detailTemplateModalLabel').html('<i class="fas fa-info-circle"></i> Template Details');
+                });
+        }
+
+        // Fungsi untuk menampilkan detail template
+        function displayTemplateDetails(template) {
+            const content = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0"><i class="fas fa-info"></i> Template Information</h6>
+                            </div>
+                            <div class="card-body">
+                                <table class="table table-sm">
+                                    <tr>
+                                        <td><strong>Template Name:</strong></td>
+                                        <td>${template.name}</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Division:</strong></td>
+                                        <td>${template.division || 'N/A'}</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Total Columns:</strong></td>
+                                        <td><span class="badge bg-primary">${template.columns.length}</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Created Date:</strong></td>
+                                        <td>${template.create_date || 'N/A'}</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Created By:</strong></td>
+                                        <td>${template.created_by || 'N/A'}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0"><i class="fas fa-columns"></i> Column Details</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>#</th>
+                                                <th>Column Name</th>
+                                                <th>Data Type</th>
+                                                <th>Allow Nulls</th>
+                                                <th>Default Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${template.columns.map((col, index) => `
+                                                <tr ${col.is_identity ? 'class="table-info"' : ''}>
+                                                    <td>${index + 1}</td>
+                                                    <td>
+                                                        <strong>${col.name}</strong>
+                                                        ${col.is_identity ? '<span class="badge bg-info ms-1">PK</span>' : ''}
+                                                        ${col.name === 'period_date' || col.name === 'upload_date' ? '<span class="badge bg-success ms-1">Auto</span>' : ''}
+                                                    </td>
+                                                    <td>
+                                                        <code>${col.data_type}${col.max_length && col.max_length !== -1 ? `(${col.max_length})` : ''}</code>
+                                                    </td>
+                                                    <td>
+                                                        ${col.is_nullable ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-danger"></i>'}
+                                                    </td>
+                                                    <td>
+                                                        ${col.default_value ? `<code>${col.default_value}</code>` : '<span class="text-muted">None</span>'}
+                                                    </td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            $('#templateDetailsContent').html(content);
         }
 
         function removeTemplateRow(button) {
             $(button).closest('tr').remove();
         }
 
-        const updatedModalBody = `
-            <div class="modal-body">
-                <div class="alert alert-info">
-                    <strong>Info:</strong> Template akan dibuat dengan <span id="templateColumnCount"></span> kolom sesuai dengan input "Jumlah Kolom"
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-bordered" id="templateColumnsTable">
-                        <thead>
-                        <tr>
-                            <th>Column Name</th>
-                            <th>Data Type</th>
-                            <th>Allow Nulls</th>
-                            <th>Default Value</th>
-                            <th>Action</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        <!-- Baris kolom akan ditambahkan secara dinamis -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            `;
-
         function validateCreateTemplateForm() {
             const tableName = document.getElementById('table_name').value.trim();
-            const columnCount = document.getElementById('column_count').value;
+            const columnCountInput = document.getElementById('column_count');
+            const columnCount = parseInt(columnCountInput.value);
             const divisions = document.getElementById('divisions').value;
             
-            const createTemplateBtn = document.querySelector('button[data-bs-target="#createTemplateModal"]');
+            const createTemplateBtn = document.getElementById('createTemplateBtn');
             
-            if (tableName && columnCount && divisions) {
+            // Check all validation conditions including column count >= 1
+            const isTableNameValid = tableName.length > 0;
+            const isColumnCountValid = columnCount >= 1 && !isNaN(columnCount);
+            const isDivisionValid = divisions.length > 0;
+            
+            if (isTableNameValid && isColumnCountValid && isDivisionValid) {
                 createTemplateBtn.disabled = false;
                 createTemplateBtn.classList.remove('btn-secondary');
                 createTemplateBtn.classList.add('btn-success');
@@ -396,7 +688,7 @@
             const columns = [];
 
             if (!tableName) {
-                showAlert('error', 'Nama tabel harus diisi');
+                showAlert('error', 'Nama template harus diisi');
                 return;
             }
 
@@ -405,6 +697,9 @@
                 return;
             }
 
+            let hasValidationError = false;
+            let errorMessage = '';
+
             rows.forEach((row, index) => {
                 const name = row.cells[0].querySelector('input').value.trim();
                 const type = row.cells[1].querySelector('select').value;
@@ -412,21 +707,39 @@
                 const defaultValue = row.cells[3].querySelector('input').value.trim();
                 
                 if (name && type) {
+                    // Validasi nama kolom tidak boleh ada spasi
+                    if (name.includes(' ')) {
+                        hasValidationError = true;
+                        errorMessage = `Nama kolom "${name}" tidak boleh menggunakan spasi`;
+                        return;
+                    }
+                    
+                    // Validasi default value jika Allow NULL tidak dicentang
+                    if (!allowNulls && !defaultValue) {
+                        hasValidationError = true;
+                        errorMessage = `Default value wajib diisi untuk kolom "${name}" karena Allow NULL tidak dicentang`;
+                        return;
+                    }
+                    
                     columns.push({ 
                         name, 
                         type, 
                         allow_nulls: allowNulls,
-                        default_value: defaultValue || null
+                        default_value: allowNulls ? null : (defaultValue || null)
                     });
                 }
             });
+
+            if (hasValidationError) {
+                showAlert('error', errorMessage);
+                return;
+            }
 
             if (columns.length === 0) {
                 showAlert('error', 'Minimal harus ada satu kolom yang valid');
                 return;
             }
 
-            // Send data to server
             const templateData = {
                 table_name: tableName,
                 columns: columns,
@@ -443,18 +756,77 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('createTemplateModal'));
-                    modal.hide();
-                    showAlert('success', 'Template berhasil disimpan!');
-                    loadExistingTables();
+                    const createModal = bootstrap.Modal.getInstance(document.getElementById('createTemplateModal'));
+                    createModal.hide();
+                    
+                    showSuccessModal(data.table_name || tableName);
+                    
+                    document.getElementById('createTableForm').reset();
+                    document.getElementById('tableNameCheck').innerHTML = '';
+                    validateCreateTemplateForm();
+                    
+                    setTimeout(() => {
+                        loadExistingTables();
+                    }, 500);
                 } else {
-                    showAlert('error', 'Gagal menyimpan template: ' + data.message);
+                    showAlert('error', data.message);
                 }
             })
             .catch(error => {
                 console.error('Error saving template:', error);
                 showAlert('error', 'Terjadi kesalahan saat menyimpan template');
             });
+        }
+
+        function showSuccessModal(tableName) {
+            // Create success modal if it doesn't exist
+            let successModal = document.getElementById('successModal');
+            if (!successModal) {
+                createSuccessModal();
+                successModal = document.getElementById('successModal');
+            }
+            
+            // Update modal content with template name
+            const modalMessage = document.getElementById('successModalMessage');
+            modalMessage.innerHTML = `Template <strong>${tableName}</strong> created and verified successfully`;
+            
+            // Show the modal
+            const modal = new bootstrap.Modal(successModal);
+            modal.show();
+            
+            // Auto-hide after 3 seconds
+            setTimeout(() => {
+                modal.hide();
+            }, 3000);
+        }
+
+        function createSuccessModal() {
+            const modalHTML = `
+                <div class="modal fade" id="successModal" tabindex="-1" aria-labelledby="successModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header bg-success text-white">
+                                <h5 class="modal-title" id="successModalLabel">
+                                    <i class="fas fa-check-circle"></i> Success
+                                </h5>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body text-center">
+                                <div class="mb-3">
+                                    <i class="fas fa-check-circle text-success" style="font-size: 3rem;"></i>
+                                </div>
+                                <p id="successModalMessage" class="fs-5"></p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-success" data-bs-dismiss="modal">OK</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Append to body
+            document.body.insertAdjacentHTML('beforeend', modalHTML);
         }
 
         function toggleDefaultValue(element) {
@@ -525,33 +897,21 @@
 
         // Load data types when page loads
         document.addEventListener('DOMContentLoaded', function() {
-            // Initial state - disable button
-            const createTemplateBtn = document.querySelector('button[data-bs-target="#createTemplateModal"]');
-            createTemplateBtn.disabled = true;
-            createTemplateBtn.classList.add('btn-secondary');
+            console.log('DOMContentLoaded - secondary initialization...');
             
-            // Add event listeners
-            document.getElementById('table_name').addEventListener('input', validateCreateTemplateForm);
-            document.getElementById('column_count').addEventListener('input', validateCreateTemplateForm);
-            document.getElementById('divisions').addEventListener('change', validateCreateTemplateForm);
-            
-            // Add event listener untuk modal show
-            document.getElementById('createTemplateModal').addEventListener('show.bs.modal', function() {
-                initializeTemplateModal();
-            });
-            loadDataTypes();
-
-            // Initialize tooltips and load draft
+            // Wait a bit longer to ensure all elements are rendered
             setTimeout(() => {
+                // Check if DataTable is already initialized
+                if (!tablesDataTable) {
+                    console.log('DataTable not initialized, trying again...');
+                    initializeDataTables();
+                }
+                
+                // Load other components
+                loadDataTypes();
                 addTooltips();
-                loadDraft();
+                addKeyboardShortcuts();
             }, 500);
-
-            // Add keyboard shortcuts
-            setTimeout(loadDraft, 500);
-            initializeDataTables();
-            loadExistingTables();
-            addKeyboardShortcuts();
         });
 
         // Load available SQL data types
@@ -572,15 +932,15 @@
                 .then(data => {
                     const checkElement = $('#tableNameCheck');
                     if (data.exists) {
-                        checkElement.text('❌ Tabel sudah ada').removeClass('text-success').addClass('text-danger');
+                        checkElement.text('❌ Template sudah ada').removeClass('text-success').addClass('text-danger');
                     } else {
-                        checkElement.text('✅ Nama tabel tersedia').removeClass('text-danger').addClass('text-success');
+                        checkElement.text('✅ Nama template tersedia').removeClass('text-danger').addClass('text-success');
                     }
                 })
                 .catch(error => {
                     console.error('Error checking table:', error);
                     $('#tableNameCheck')
-                        .text('⚠️ Terjadi kesalahan saat memeriksa tabel')
+                        .text('⚠️ Terjadi kesalahan saat memeriksa template')
                         .removeClass('text-success')
                         .addClass('text-warning');
                 });
@@ -618,12 +978,12 @@
                 }
                 
                 if (!validFormat) {
-                    checkDiv.innerHTML = '<span style="color: #dc2626;">❌ Nama tabel tidak valid (harus dimulai huruf, hanya huruf/angka/underscore)</span>';
+                    checkDiv.innerHTML = '<span style="color: #dc2626;">❌ Nama template tidak valid (harus dimulai huruf, hanya huruf/angka/underscore)</span>';
                     return;
                 }
                 
                 // Show checking status
-                checkDiv.innerHTML = '<span style="color: #6b7280;">🔍 Memeriksa ketersediaan nama tabel...</span>';
+                checkDiv.innerHTML = '<span style="color: #6b7280;">🔍 Memeriksa ketersediaan nama template...</span>';
                 
                 // Debounce the API call
                 tableCheckTimeout = setTimeout(() => {
@@ -722,7 +1082,7 @@
             const formData = getFormData();
             
             if (!formData.table_name) {
-                showAlert('warning', 'Masukkan nama tabel terlebih dahulu');
+                showAlert('warning', 'Masukkan nama template terlebih dahulu');
                 return;
             }
             
@@ -757,7 +1117,7 @@
             
             previewContent.innerHTML = `
                 <div class="preview-info">
-                    <h5>🗃️ Tabel: ${formData.table_name}</h5>
+                    <h5>🗃️ Template: ${formData.table_name}</h5>
                     <p>Total kolom: ${formData.columns.length + 1} (termasuk ID)</p>
                 </div>
                 <div class="query-preview">
@@ -832,14 +1192,14 @@
 
             // Table name validation
             if (!formData.table_name) {
-                errors.push('Nama tabel harus diisi');
+                errors.push('Nama template harus diisi');
             } else {
                 const tableValidation = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(formData.table_name);
                 if (!tableValidation) {
-                    errors.push('Nama tabel tidak valid (harus dimulai huruf, hanya huruf/angka/underscore)');
+                    errors.push('Nama template tidak valid (harus dimulai huruf, hanya huruf/angka/underscore)');
                 }
                 if (/ssot_/i.test(formData.table_name)) {
-                    errors.push('Nama tabel tidak boleh mengandung kata "ssot_"');
+                    errors.push('Nama template tidak boleh mengandung kata "ssot_"');
                 }
             }
 
@@ -904,8 +1264,6 @@
             return errors;
         }
 
-
-
         // UNIFIED Form submission handler
         function initializeFormSubmission() {
             const form = document.getElementById('createTableForm');
@@ -932,7 +1290,7 @@
                 checkTableExistsBeforeSubmit(formData.table_name)
                     .then(exists => {
                         if (exists) {
-                            showAlert('error', `Tabel "${formData.table_name}" sudah ada dalam database`);
+                            showAlert('error', `Template "${formData.table_name}" sudah ada dalam database`);
                             return;
                         }
                         
@@ -960,7 +1318,7 @@
 
         function submitForm(formData) {
             isSubmitting = true;
-            showLoading(true, 'Membuat tabel database...');
+            showLoading(true, 'Membuat template database...');
             hideResult();
             
             // Add timeout untuk request
@@ -988,21 +1346,23 @@
                 
                 if (data.success) {
                     const details = createSuccessDetails(data);
-                    showResult('success', 'Tabel Berhasil Dibuat! 🎉', data.message, details);
+                    showResult('success', 'Template Berhasil Dibuat! 🎉', data.message, details);
                     
                     // Reset form
                     document.getElementById('createTableForm').reset();
-                    document.getElementById('columnsContainer').innerHTML = '';
                     document.getElementById('tableNameCheck').innerHTML = '';
                     columnCount = 0;
+                    
+                    // Reset button state
+                    validateCreateTemplateForm();
                     
                     // Clear draft
                     clearDraft();
                     
                     // Show success alert
-                    showAlert('success', `Tabel "${data.table_name}" berhasil dibuat!`);
+                    showAlert('success', `Template "${data.table_name}" berhasil dibuat!`);
                 } else {
-                    showResult('error', 'Gagal Membuat Tabel ❌', data.message);
+                    showResult('error', 'Gagal Membuat Template ❌', data.message);
                     showAlert('error', data.message);
                 }
             })
@@ -1026,7 +1386,7 @@
 
         function createSuccessDetails(data) {
             let details = '<table style="width: 100%; margin-top: 15px;">';
-            details += `<tr><th style="width: 40%;">Nama Tabel</th><td><strong>${data.table_name}</strong></td></tr>`;
+            details += `<tr><th style="width: 40%;">Nama Template</th><td><strong>${data.table_name}</strong></td></tr>`;
             details += `<tr><th>Jumlah Kolom</th><td><strong>${data.columns_created + 1}</strong> (termasuk ID)</td></tr>`;
             details += '</table>';
             
@@ -1055,7 +1415,7 @@
                     submitButton.disabled = true;
                     submitButton.style.opacity = '0.6';
                     submitButton.style.cursor = 'not-allowed';
-                    submitButton.innerHTML = '<span>⏳</span> Membuat Tabel...';
+                    submitButton.innerHTML = '<span>⏳</span> Membuat Template...';
                 }
                 
                 if (previewButton) {
@@ -1071,7 +1431,7 @@
                     submitButton.disabled = false;
                     submitButton.style.opacity = '1';
                     submitButton.style.cursor = 'pointer';
-                    submitButton.innerHTML = '<span>🗃️</span> Buat Tabel';
+                    submitButton.innerHTML = '<span>🗃️</span> Buat Template';
                 }
                 
                 if (previewButton) {
@@ -1108,8 +1468,8 @@
             // Remove existing alerts
             $('.alert').remove();
             
-            const alertClass = type === 'success' ? 'alert-success' : 'alert-danger';
-            const alertIcon = type === 'success' ? '✅' : '❌';
+            const alertClass = type === 'success' ? 'alert-success' : type === 'warning' ? 'alert-warning' : 'alert-danger';
+            const alertIcon = type === 'success' ? '✅' : type === 'warning' ? '⚠️' : '❌';
             
             const alert = $(`
                 <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
@@ -1143,7 +1503,7 @@
         // Add tooltips for better UX
         function addTooltips() {
             const tooltips = {
-                'table_name': 'Nama tabel harus unik dan mengikuti aturan penamaan SQL Server',
+                'table_name': 'Nama template harus unik dan mengikuti aturan penamaan SQL Server',
                 'column_type': 'Pilih tipe data yang sesuai dengan jenis data yang akan disimpan',
                 'column_length': 'Panjang maksimum untuk tipe data yang mendukung panjang variabel'
             };
@@ -1169,155 +1529,241 @@
                 if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Enter') {
                     e.preventDefault();
                     const form = document.getElementById('createTableForm');
-                    if (form) {
-                        form.dispatchEvent(new Event('submit'));
-                    }
-                }
-                
-                // Ctrl/Cmd + + to add column
-                if ((e.ctrlKey || e.metaKey) && e.key === '=') {
-                    e.preventDefault();
-                    addColumn();
-                }
-            });
-        }
+                   if (form) {
+                       form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                   }
+               }
+               
+               // Ctrl/Cmd + S to save draft
+               if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                   e.preventDefault();
+                   saveDraft();
+                   showAlert('info', 'Draft tersimpan');
+               }
+               
+               // Escape to close modals and alerts
+               if (e.key === 'Escape') {
+                   hideAlert();
+                   const modals = document.querySelectorAll('.modal.show');
+                   modals.forEach(modal => {
+                       const bsModal = bootstrap.Modal.getInstance(modal);
+                       if (bsModal) bsModal.hide();
+                   });
+               }
+           });
+       }
 
         // Auto-save draft functionality (using sessionStorage for temporary storage)
         function saveDraft() {
-            const formData = getFormData();
-            if (formData.table_name || formData.columns.length > 0) {
-                try {
-                    sessionStorage.setItem('createTableDraft', JSON.stringify(formData));
-                } catch (e) {
-                    console.warn('Could not save draft:', e);
-                }
-            }
+           const formData = getFormData();
+           const draft = {
+               table_name: formData.table_name,
+               columns: formData.columns,
+               timestamp: new Date().toISOString()
+           };
+           
+           // Save to memory instead of localStorage
+           window.currentDraft = draft;
+           
+           // Visual feedback
+           const draftIndicator = document.getElementById('draftIndicator');
+           if (draftIndicator) {
+               draftIndicator.style.display = 'inline';
+               draftIndicator.textContent = '💾 Draft tersimpan';
+               setTimeout(() => {
+                   draftIndicator.style.display = 'none';
+               }, 2000);
+           }
         }
 
         function loadDraft() {
-            try {
-                const draft = sessionStorage.getItem('createTableDraft');
-                if (draft) {
-                    const formData = JSON.parse(draft);
+            const draft = window.currentDraft;
+            if (!draft) return;
+            
+            // Load table name
+            const tableNameInput = document.getElementById('table_name');
+            if (tableNameInput && draft.table_name) {
+                tableNameInput.value = draft.table_name;
+            }
+            
+            // Load columns
+            if (draft.columns && draft.columns.length > 0) {
+                // Clear existing columns
+                const columnsContainer = document.getElementById('columnsContainer');
+                if (columnsContainer) {
+                    columnsContainer.innerHTML = '';
                     
-                    // Load table name
-                    if (formData.table_name) {
-                        document.getElementById('table_name').value = formData.table_name;
-                    }
-                    
-                    // Load columns
-                    if (formData.columns && formData.columns.length > 0) {
-                        // Clear existing columns
-                        document.getElementById('columnsContainer').innerHTML = '';
-                        columnCount = 0;
-                        
-                        // Add columns from draft
-                        formData.columns.forEach(col => {
-                            addColumn();
-                            const currentColumn = columnCount;
+                    // Add columns from draft
+                    draft.columns.forEach((col, index) => {
+                        addColumn();
+                        const columnDiv = document.querySelector(`#column_${columnCount}`);
+                        if (columnDiv) {
+                            const nameInput = columnDiv.querySelector('input[name^="column_name_"]');
+                            const typeSelect = columnDiv.querySelector('select[name^="column_type_"]');
+                            const lengthInput = columnDiv.querySelector('input[name^="column_length_"]');
+                            const nullableInput = columnDiv.querySelector('input[name^="column_nullable_"]');
                             
-                            setTimeout(() => {
-                                const nameInput = document.querySelector(`input[name="column_name_${currentColumn}"]`);
-                                const typeSelect = document.querySelector(`select[name="column_type_${currentColumn}"]`);
-                                const lengthInput = document.querySelector(`input[name="column_length_${currentColumn}"]`);
-                                const nullableInput = document.querySelector(`input[name="column_nullable_${currentColumn}"]`);
-                                
-                                if (nameInput) nameInput.value = col.name;
-                                if (typeSelect) typeSelect.value = col.type;
-                                if (lengthInput) lengthInput.value = col.length;
-                                if (nullableInput) nullableInput.checked = col.allow_nulls;
-                                
-                                // Trigger change event to update length field
-                                if (typeSelect) {
-                                    toggleLengthField(currentColumn);
-                                }
-                            }, 100);
-                        });
-                        
-                        showAlert('info', 'Draft formulir dimuat dari sesi sebelumnya');
-                    }
+                            if (nameInput) nameInput.value = col.name || '';
+                            if (typeSelect) typeSelect.value = col.type || '';
+                            if (lengthInput) lengthInput.value = col.length || '';
+                            if (nullableInput) nullableInput.checked = col.allow_nulls || false;
+                            
+                            // Trigger validation
+                            if (nameInput) addColumnNameValidation(columnCount);
+                            if (typeSelect) toggleLengthField(columnCount);
+                        }
+                    });
                 }
-            } catch (e) {
-                console.warn('Could not load draft:', e);
+            }
+            
+            // Show draft loaded notification
+            showAlert('info', `Draft dimuat (tersimpan: ${new Date(draft.timestamp).toLocaleString()})`);
+        }
+
+        function clearDraft() {
+            window.currentDraft = null;
+            const draftIndicator = document.getElementById('draftIndicator');
+            if (draftIndicator) {
+                draftIndicator.style.display = 'none';
             }
         }
 
         function initializeDataTables() {
-            tablesDataTable = $('#tablesDataTable').DataTable({
-                responsive: true,
-                processing: true,
-                serverSide: false,
-                pageLength: 10,
-                order: [[2, 'desc']], // Sort by created date descending
-                columnDefs: [
-                    { 
-                        targets: [3], // Actions column
-                        orderable: false,
-                        searchable: false,
-                        width: '150px'
+            if (!document.getElementById('tablesDataTable')) {
+                console.error('tablesDataTable element not found');
+                return;
+            }
+
+            // Destroy existing DataTable if it exists
+            if ($.fn.DataTable.isDataTable('#tablesDataTable')) {
+                $('#tablesDataTable').DataTable().destroy();
+            }
+
+            try {
+                tablesDataTable = $('#tablesDataTable').DataTable({
+                    responsive: true,
+                    processing: true,
+                    serverSide: false,
+                    pageLength: 10,
+                    order: [[2, 'desc']], // Sort by created date descending
+                    columnDefs: [
+                        { 
+                            targets: [3], // Actions column
+                            orderable: false,
+                            searchable: false,
+                            width: '150px'
+                        }
+                    ],
+                    language: {
+                        emptyTable: "Tidak ada template yang ditemukan",
+                        processing: "Memuat template...",
+                        search: "Cari template:",
+                        lengthMenu: "Tampilkan _MENU_ template per halaman",
+                        info: "Menampilkan _START_ sampai _END_ dari _TOTAL_ template",
+                        paginate: {
+                            first: "Pertama",
+                            last: "Terakhir", 
+                            next: "Selanjutnya",
+                            previous: "Sebelumnya"
+                        }
                     }
-                ],
-                language: {
-                    emptyTable: "No tables or templates found",
-                    processing: "Loading tables...",
-                    search: "Search tables:",
-                    lengthMenu: "Show _MENU_ tables per page",
-                    info: "Showing _START_ to _END_ of _TOTAL_ tables",
-                    paginate: {
-                        first: "First",
-                        last: "Last",
-                        next: "Next",
-                        previous: "Previous"
-                    }
-                }
-            });
+                });
+                
+                console.log('DataTable initialized successfully');
+                
+                // Load data after DataTable is ready
+                loadExistingTables();
+                
+            } catch (error) {
+                console.error('DataTables initialization failed:', error);
+            }
         }
 
         function loadExistingTables() {
+            console.log('Loading existing tables...');
+            
             fetch('/get-existing-tables')
-                .then(response => response.json())
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
+                    console.log('Received data:', data);
+                    
                     if (data.success) {
-                        populateTablesDataTable(data.tables);
+                        if (data.tables && data.tables.length > 0) {
+                            console.log(`Found ${data.tables.length} templates`);
+                            populateTablesDataTable(data.tables);
+                        } else {
+                            console.log('No templates found');
+                            // Clear table if no data
+                            if (tablesDataTable) {
+                                tablesDataTable.clear().draw();
+                            }
+                        }
                     } else {
-                        console.error('Failed to load tables:', data.message);
-                        showAlert('error', 'Failed to load existing tables');
+                        console.error('Failed to load templates:', data.message);
+                        showAlert('error', 'Gagal memuat template: ' + data.message);
                     }
                 })
                 .catch(error => {
-                    console.error('Error loading tables:', error);
-                    showAlert('error', 'Error loading existing tables');
+                    console.error('Error loading templates:', error);
+                    showAlert('error', 'Error memuat template: ' + error.message);
                 });
         }
 
         function populateTablesDataTable(tables) {
+            console.log('Populating DataTable with tables:', tables);
+            
             if (!tablesDataTable) {
                 console.error('tablesDataTable is not initialized');
+                initializeDataTables();
                 return;
             }
 
             tablesDataTable.clear();
             
-            tables.forEach(table => {
+            if (!tables || tables.length === 0) {
+                console.log('No tables to populate');
+                tablesDataTable.draw();
+                return;
+            }
+            
+            tables.forEach((table, index) => {
+                console.log(`Adding table ${index + 1}:`, table);
+                
                 const actions = `
                     <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-info btn-sm" 
+                                onclick="viewTemplateDetails('${table.name}')" 
+                                title="View Details of ${table.name}">
+                            <i class="fas fa-eye"></i>
+                        </button>
                         <button type="button" class="btn btn-danger btn-sm" 
                                 onclick="deleteTable('${table.name}')" 
-                                title="Delete ${table.type}">
+                                title="Delete ${table.name}">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
                 `;
                 
-                tablesDataTable.row.add([
-                    table.name,
-                    table.division || 'N/A',
-                    table.create_date || 'N/A',
-                    actions
-                ]);
+                try {
+                    tablesDataTable.row.add([
+                        table.name || 'N/A',
+                        table.division || 'N/A',
+                        table.create_date || 'N/A',
+                        actions
+                    ]);
+                } catch (error) {
+                    console.error(`Error adding row ${index}:`, error);
+                }
             });
             
             tablesDataTable.draw();
+            console.log('DataTable populated and drawn');
         }
 
         function editTable(tableName) {
@@ -1435,7 +1881,7 @@
             const columns = [];
 
             if (!tableName) {
-                showAlert('error', 'Nama tabel harus diisi');
+                showAlert('error', 'Nama template harus diisi');
                 return;
             }
 
@@ -1478,7 +1924,7 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showAlert('success', 'Perubahan tabel berhasil disimpan!');
+                    showAlert('success', 'Perubahan template berhasil disimpan!');
                     loadExistingTables();
 
                     // Tutup modal jika ada
@@ -1597,13 +2043,5 @@
             this.saveTimeout = setTimeout(saveDraft, 2000);
         });
 
-        // Clear draft after successful submission
-        function clearDraft() {
-            try {
-                sessionStorage.removeItem('createTableDraft');
-            } catch (e) {
-                console.warn('Could not clear draft:', e);
-            }
-        }
     </script>
 {% endblock %}
