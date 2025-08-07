@@ -1016,15 +1016,232 @@ def get_excel_sheets(file_path):
         logger.error(f"Error reading Excel sheets: {str(e)}")
         return None
 
-def insert_to_MasterUploader(conn, username, division, template, sheets, file_upload, period_date, upload_date):
-    cursor = conn.cursor()
-    insert_query = """
-        INSERT INTO MasterUploader (username, division, template, sheets, file_upload, period_date, upload_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+def convert_value_for_sql_server(value):
     """
-    cursor.execute(insert_query, (username, division, template, sheets, file_upload, period_date, upload_date))
-    conn.commit()
+    Convert Python values specifically for SQL Server driver compatibility
+    """
+    if value is None:
+        return None
     
+    # Boolean conversion - critical for SQL Server driver
+    elif isinstance(value, bool):
+        return 1 if value else 0
+    
+    # String handling - ensure proper encoding
+    elif isinstance(value, str):
+        # Remove null bytes yang bisa menyebabkan error
+        return value.replace('\x00', '')
+    
+    # Numeric types
+    elif isinstance(value, (int, float)):
+        return value
+    
+    # Decimal handling
+    elif isinstance(value, Decimal):
+        return float(value)
+    
+    # DateTime handling
+    elif isinstance(value, (datetime, date)):
+        return value
+    
+    # Complex types - convert to string
+    elif isinstance(value, (list, dict, tuple)):
+        return str(value)
+    
+    # Bytes handling
+    elif isinstance(value, bytes):
+        return value
+    
+    # Default case
+    else:
+        return str(value)
+
+def safe_executemany_sql_server(cursor, query, data_batch):
+    """
+    Safe executemany method specifically for SQL Server driver
+    """
+    try:
+        # Convert semua data dalam batch
+        converted_batch = []
+        for row in data_batch:
+            converted_row = tuple(convert_value_for_sql_server(value) for value in row)
+            converted_batch.append(converted_row)
+        
+        # Gunakan executemany dengan data yang sudah diconvert
+        cursor.executemany(query, converted_batch)
+        return True, None
+        
+    except pyodbc.Error as e:
+        return False, str(e)
+
+def insert_batch_with_fallback(cursor, table_name, columns, data_batch):
+    """
+    Insert batch dengan fallback strategy untuk SQL Server driver
+    """
+    placeholders = ', '.join(['?' for _ in columns])
+    column_names = ', '.join(columns)
+    query = f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})"
+    
+    print(f"Attempting batch insert of {len(data_batch)} records...")
+    
+    # Coba batch insert dulu
+    success, error = safe_executemany_sql_server(cursor, query, data_batch)
+    
+    if success:
+        print("Batch insert successful!")
+        return True
+    
+    print(f"Batch insert failed: {error}")
+    print("Falling back to individual inserts...")
+    
+    # Fallback ke individual insert
+    return insert_individual_rows(cursor, query, data_batch)
+
+def insert_individual_rows(cursor, query, data_batch):
+    """
+    Insert rows satu per satu dengan detailed error handling
+    """
+    success_count = 0
+    error_count = 0
+    
+    for i, row in enumerate(data_batch):
+        try:
+            converted_row = tuple(convert_value_for_sql_server(value) for value in row)
+            cursor.execute(query, converted_row)
+            success_count += 1
+            
+            # Commit setiap beberapa rows untuk menghindari timeout
+            if success_count % 100 == 0:
+                cursor.commit()
+                
+        except pyodbc.Error as e:
+            error_count += 1
+            print(f"Error inserting row {i+1}: {e}")
+            
+            # Debug info untuk row yang bermasalah
+            print(f"Problematic row data:")
+            for j, value in enumerate(row):
+                print(f"  Field {j}: {type(value).__name__} = {repr(value)[:100]}")
+            print("-" * 50)
+    
+    print(f"Individual insert completed: {success_count} success, {error_count} errors")
+    return success_count > 0
+
+def insert_to_master_uploader(data_list, table_name="MasterUploader"):
+    """
+    Main function untuk insert ke database dengan SQL Server driver
+    """
+    conn = None
+    cursor = None
+    
+    try:
+        print("Connecting to database...")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Pastikan data tidak kosong
+        if not data_list:
+            print("No data to insert")
+            return False
+        
+        # Contoh: ambil columns dari data pertama (sesuaikan dengan struktur tabel Anda)
+        if isinstance(data_list[0], dict):
+            columns = list(data_list[0].keys())
+            batch_data = [[item.get(col) for col in columns] for item in data_list]
+        else:
+            # Jika data_list berupa list of lists/tuples
+            # Anda perlu define columns secara manual
+            columns = ["column1", "column2", "column3"]  # Ganti sesuai struktur tabel
+            batch_data = data_list
+        
+        print(f"Columns: {columns}")
+        print(f"Data sample: {batch_data[0] if batch_data else 'No data'}")
+        
+        # Debug data types sebelum insert
+        debug_data_types(batch_data[:3], columns)
+        
+        # Lakukan insert
+        success = insert_batch_with_fallback(cursor, table_name, columns, batch_data)
+        
+        if success:
+            conn.commit()
+            print(f"✅ Successfully completed insert operation for {table_name}")
+            return True
+        else:
+            conn.rollback()
+            print(f"❌ Insert operation failed for {table_name}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Database operation error: {e}")
+        if conn:
+            conn.rollback()
+        return False
+        
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+        print("Database connection closed")
+
+def debug_data_types(data_batch, columns):
+    """
+    Debug function untuk melihat data types sebelum insert
+    """
+    print("\n=== DEBUG: Data Types Analysis ===")
+    if not data_batch:
+        print("No data to analyze")
+        return
+        
+    for i, row in enumerate(data_batch):
+        print(f"Row {i+1}:")
+        for j, (col_name, value) in enumerate(zip(columns, row)):
+            value_type = type(value).__name__
+            value_repr = repr(value)[:50] + "..." if len(repr(value)) > 50 else repr(value)
+            
+            # Highlight potentially problematic types
+            if value_type in ['bool', 'list', 'dict', 'tuple', 'bytes']:
+                print(f"  ⚠️  {col_name}: {value_type} = {value_repr}")
+            else:
+                print(f"  ✅  {col_name}: {value_type} = {value_repr}")
+    print("================================\n")
+
+def insert_to_MasterUploader(conn, username, division, template, sheets, file_upload, period_date, upload_date):
+    """
+    Insert ke tabel MasterUploader dengan proper data conversion
+    """
+    cursor = conn.cursor()
+    
+    try:
+        # Convert values menggunakan fungsi yang sudah ada
+        converted_values = [
+            convert_value_for_sql_server(username),
+            convert_value_for_sql_server(division),
+            convert_value_for_sql_server(template),
+            convert_value_for_sql_server(sheets),
+            convert_value_for_sql_server(file_upload),
+            convert_value_for_sql_server(period_date),
+            convert_value_for_sql_server(upload_date)
+        ]
+        
+        insert_query = """
+            INSERT INTO MasterUploader (username, division, template, sheets, file_upload, period_date, upload_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        
+        cursor.execute(insert_query, tuple(converted_values))
+        conn.commit()
+        print("✅ Successfully inserted to MasterUploader")
+        
+    except pyodbc.Error as e:
+        print(f"❌ Error inserting to MasterUploader: {e}")
+        print(f"Data being inserted: {converted_values}")
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+
 def safe_insert_single_record(table_name, columns, values):
     """
     Helper function untuk insert single record dengan error handling
