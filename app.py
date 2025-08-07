@@ -167,7 +167,7 @@ def find_primary_header_row(df, primary_header_pattern=None):
 def find_header_row_and_validate(df, required_headers, primary_header_pattern=None):
     """
     Mencari baris header dan memvalidasi keberadaan semua header yang diperlukan.
-    Sekarang mendukung mapping kolom mirip seperti 'FACILITY NUMBER' dan 'NEW FACILITY NUMBER' tanpa tertimpa.
+    Sekarang mendukung mapping kolom berdasarkan posisi dan jumlah kolom.
     """
     def normalize_header(header):
         """Normalisasi header untuk perbandingan"""
@@ -177,16 +177,71 @@ def find_header_row_and_validate(df, required_headers, primary_header_pattern=No
         normalized = re.sub(r'\s+', ' ', normalized).lower().strip()
         return normalized
 
-    def is_header_match(excel_header, db_header):
-        """Cek apakah dua header cocok dengan berbagai variasi"""
-        if pd.isna(excel_header) or pd.isna(db_header):
+    def is_header_match_by_position(excel_col_index, db_col_index, total_excel_cols, total_db_cols):
+        """
+        Cek apakah dua header cocok berdasarkan posisi kolom
+        
+        Args:
+            excel_col_index: Indeks kolom di Excel (0-based)
+            db_col_index: Indeks kolom di database schema (0-based)
+            total_excel_cols: Total jumlah kolom aktif di Excel
+            total_db_cols: Total jumlah kolom yang dibutuhkan dari database
+        
+        Returns:
+            bool: True jika posisi cocok
+        """
+        # Jika jumlah kolom sama, mapping langsung berdasarkan posisi
+        if total_excel_cols == total_db_cols:
+            return excel_col_index == db_col_index
+        
+        # Jika Excel memiliki lebih banyak kolom, mapping proporsi
+        elif total_excel_cols > total_db_cols:
+            # Hitung posisi relatif dalam database
+            relative_position = db_col_index / (total_db_cols - 1) if total_db_cols > 1 else 0
+            expected_excel_index = round(relative_position * (total_excel_cols - 1)) if total_excel_cols > 1 else 0
+            
+            # Toleransi ±1 untuk mapping yang lebih fleksibel
+            return abs(excel_col_index - expected_excel_index) <= 1
+        
+        # Jika database memiliki lebih banyak kolom
+        else:
+            # Hitung posisi relatif dalam Excel
+            relative_position = excel_col_index / (total_excel_cols - 1) if total_excel_cols > 1 else 0
+            expected_db_index = round(relative_position * (total_db_cols - 1)) if total_db_cols > 1 else 0
+            
+            # Toleransi ±1 untuk mapping yang lebih fleksibel
+            return abs(db_col_index - expected_db_index) <= 1
+
+    def is_header_match_hybrid(excel_header, db_header, excel_col_index, db_col_index, 
+                              total_excel_cols, total_db_cols, use_position_only=False):
+        """
+        Cek header dengan pendekatan hybrid: posisi + nama (opsional)
+        """
+        # Mode posisi saja
+        if use_position_only:
+            return is_header_match_by_position(excel_col_index, db_col_index, 
+                                             total_excel_cols, total_db_cols)
+        
+        # Mode hybrid: cek posisi terlebih dahulu
+        position_match = is_header_match_by_position(excel_col_index, db_col_index, 
+                                                   total_excel_cols, total_db_cols)
+        
+        # Jika posisi tidak cocok, skip
+        if not position_match:
             return False
+        
+        # Jika posisi cocok, validasi dengan nama (opsional untuk konfirmasi)
+        if pd.isna(excel_header) or pd.isna(db_header):
+            return True  # Terima jika posisi cocok meskipun nama kosong
+        
         excel_norm = normalize_header(excel_header)
         db_norm = normalize_header(db_header)
-
+        
+        # Jika salah satu kosong, terima berdasarkan posisi
         if not excel_norm or not db_norm:
-            return False
-
+            return True
+        
+        # Cek kesamaan nama sebagai konfirmasi tambahan
         # Prioritaskan exact match
         if excel_norm == db_norm:
             return True
@@ -199,13 +254,15 @@ def find_header_row_and_validate(df, required_headers, primary_header_pattern=No
         # Substring match minimal 4 karakter
         if len(excel_norm) >= 4 and (excel_norm in db_norm or db_norm in excel_norm):
             return True
-
-        return False
+        
+        # Jika nama tidak cocok tapi posisi cocok, masih terima dengan peringatan
+        logger.warning(f"Posisi cocok tapi nama berbeda: '{excel_header}' vs '{db_header}'")
+        return True
 
     # Cari baris header
     header_row, detected_primary = find_primary_header_row(df, primary_header_pattern)
 
-    # Deteksi kolom pertama yang tidak kosong (agar kolom kosong seperti kolom A tidak ikut)
+    # Deteksi kolom pertama yang tidak kosong
     first_nonempty_col_index = next(
         (idx for idx, val in enumerate(df.iloc[header_row]) if pd.notna(val) and str(val).strip()), 0
     )
@@ -216,43 +273,57 @@ def find_header_row_and_validate(df, required_headers, primary_header_pattern=No
         for val in df.iloc[header_row][first_nonempty_col_index:]
     ]
 
-    # Validasi dan mapping
-    valid_headers_mapping = []  # List of tuples: (excel_header, db_header)
+    # Hitung total kolom aktif
+    total_excel_cols = len([h for h in excel_headers if h.strip()])
+    total_db_cols = len(required_headers)
+
+    logger.info(f"Total kolom Excel aktif: {total_excel_cols}")
+    logger.info(f"Total kolom database required: {total_db_cols}")
+
+    # Validasi dan mapping berdasarkan posisi
+    valid_headers_mapping = []
     missing_headers = []
     found_headers = []
     match_details = []
 
-    matched_excel_indices = set()  # Untuk menghindari mapping dua kali ke kolom Excel yang sama
-
-    for db_header in required_headers:
+    # Parameter untuk mengatur mode matching
+    use_position_only = True  # Set True untuk matching berdasarkan posisi saja
+    
+    for db_col_index, db_header in enumerate(required_headers):
         matching_excel_header = None
         match_type = ""
-
-        for idx, excel_header in enumerate(excel_headers):
-            if idx in matched_excel_indices:
+        
+        # Cari berdasarkan posisi
+        for excel_col_index, excel_header in enumerate(excel_headers):
+            if not excel_header.strip():  # Skip kolom kosong
                 continue
-
-            if excel_header and is_header_match(excel_header, db_header):
+                
+            if is_header_match_hybrid(excel_header, db_header, excel_col_index, db_col_index,
+                                    total_excel_cols, total_db_cols, use_position_only):
                 matching_excel_header = excel_header
-                matched_excel_indices.add(idx)
-
+                
                 # Tentukan tipe match
-                excel_norm = normalize_header(excel_header)
-                db_norm = normalize_header(db_header)
-                if excel_norm == db_norm:
-                    match_type = "exact"
-                elif excel_norm.replace(' ', '_') == db_norm.replace(' ', '_'):
-                    match_type = "separator_normalized"
-                elif re.sub(r'[\s_-]+', '', excel_norm) == re.sub(r'[\s_-]+', '', db_norm):
-                    match_type = "no_separator"
+                if use_position_only:
+                    match_type = "position_based"
                 else:
-                    match_type = "substring"
+                    # Logika untuk menentukan tipe match nama
+                    if pd.notna(excel_header) and pd.notna(db_header):
+                        excel_norm = normalize_header(excel_header)
+                        db_norm = normalize_header(db_header)
+                        if excel_norm == db_norm:
+                            match_type = "position_and_exact_name"
+                        elif excel_norm.replace(' ', '_') == db_norm.replace(' ', '_'):
+                            match_type = "position_and_separator_normalized"
+                        else:
+                            match_type = "position_and_partial_name"
+                    else:
+                        match_type = "position_only"
                 break
 
         if matching_excel_header:
             valid_headers_mapping.append((matching_excel_header, db_header))
             found_headers.append(db_header)
-            match_details.append(f"'{matching_excel_header}' -> '{db_header}' ({match_type})")
+            match_details.append(f"Kolom {db_col_index + 1}: '{matching_excel_header}' -> '{db_header}' ({match_type})")
         else:
             missing_headers.append(db_header)
 
@@ -261,7 +332,7 @@ def find_header_row_and_validate(df, required_headers, primary_header_pattern=No
     logger.info(f"Header yang ditemukan: {found_headers}")
 
     if match_details:
-        logger.info("Detail pencocokan header:")
+        logger.info("Detail pencocokan header berdasarkan posisi:")
         for detail in match_details:
             logger.info(f"  {detail}")
 
