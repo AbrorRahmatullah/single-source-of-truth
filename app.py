@@ -1024,7 +1024,47 @@ def insert_to_MasterUploader(conn, username, division, template, sheets, file_up
     """
     cursor.execute(insert_query, (username, division, template, sheets, file_upload, period_date, upload_date))
     conn.commit()
-
+    
+def safe_insert_single_record(table_name, columns, values):
+    """
+    Helper function untuk insert single record dengan error handling
+    """
+    conn = None
+    cursor = None
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Convert values
+        converted_values = [convert_value_for_sql_server(value) for value in values]
+        
+        # Build query
+        placeholders = ', '.join(['?' for _ in columns])
+        column_names = ', '.join(columns)
+        query = f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})"
+        
+        # Debug info
+        print(f"Inserting to {table_name}:")
+        for col, val in zip(columns, converted_values):
+            print(f"  {col}: {type(val).__name__} = {repr(val)}")
+        
+        cursor.execute(query, tuple(converted_values))
+        conn.commit()
+        print(f"✅ Successfully inserted to {table_name}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error inserting to {table_name}: {e}")
+        if conn:
+            conn.rollback()
+        return False
+        
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
          
 @app.route('/', methods=['GET', 'POST'])
@@ -1125,7 +1165,6 @@ def upload_file():
         )
     
     elif request.method == 'POST':
-        # Kode POST method tetap sama seperti sebelumnya
         try:
             if 'file' not in request.files:
                 return jsonify({'success': False, 'message': 'Tidak ada file yang dipilih'})
@@ -1165,22 +1204,36 @@ def upload_file():
             # Proses file
             result = process_excel_file(file_path, table_name, primary_header, sheet_name, periode_date)
             
-            # Simpan ke tabel MasterUploader
+            # Simpan ke tabel MasterUploader dengan error handling yang lebih baik
             try:
-                conn = get_db_connection()  # pastikan Anda punya fungsi koneksi ini
-                insert_to_MasterUploader(
-                    conn=conn,
-                    username=session.get('username'),
-                    division=session.get('division'),
-                    template=table_name,
-                    sheets=sheet_name,
-                    file_upload=file_path,
-                    period_date=periode_date,
-                    upload_date=datetime.now()
-                )
-                conn.close()
+                print("Attempting to insert to MasterUploader...")
+                
+                # Gunakan fungsi safe_insert_single_record
+                columns = ['username', 'division', 'template', 'sheets', 'file_upload', 'period_date', 'upload_date']
+                values = [
+                    session.get('username'),
+                    session.get('division'),
+                    table_name,
+                    sheet_name,
+                    file_path,
+                    periode_date,
+                    datetime.now()
+                ]
+                
+                # Debug data sebelum insert
+                print("Data to be inserted to MasterUploader:")
+                for col, val in zip(columns, values):
+                    print(f"  {col}: {type(val).__name__} = {repr(val)}")
+                
+                insert_success = safe_insert_single_record('MasterUploader', columns, values)
+                
+                if not insert_success:
+                    logger.warning("Failed to insert to MasterUploader, but continuing with main process")
+                    
             except Exception as e:
                 logger.error(f"Gagal insert ke MasterUploader: {str(e)}")
+                # Don't fail the entire process if MasterUploader insert fails
+                logger.warning("Continuing with main process despite MasterUploader insert failure")
             
             return jsonify(result)
         
@@ -1188,8 +1241,8 @@ def upload_file():
             logger.error(f"Error in upload_file: {str(e)}")
             return jsonify({'success': False, 'message': f'Error: {str(e)}'})
     
-    return redirect(url_for('upload_file'))
-                
+    return redirect(url_for('upload_file'))                
+
 @app.route('/preview-headers/<table_name>')
 def preview_headers(table_name):
     """
