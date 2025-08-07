@@ -756,18 +756,29 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
+                    // Hide the create template modal first
                     const createModal = bootstrap.Modal.getInstance(document.getElementById('createTemplateModal'));
-                    createModal.hide();
+                    if (createModal) {
+                        createModal.hide();
+                    }
                     
-                    showSuccessModal(data.table_name || tableName);
-                    
-                    document.getElementById('createTableForm').reset();
-                    document.getElementById('tableNameCheck').innerHTML = '';
-                    validateCreateTemplateForm();
-                    
+                    // Wait for modal to be completely hidden before showing success
                     setTimeout(() => {
-                        loadExistingTables();
-                    }, 500);
+                        // Use simple alert instead of modal for better UX
+                        showSuccessAlert(data.table_name || tableName);
+                        
+                        // Reset form
+                        document.getElementById('createTableForm').reset();
+                        document.getElementById('tableNameCheck').innerHTML = '';
+                        validateCreateTemplateForm();
+                        
+                        // Reload tables
+                        setTimeout(() => {
+                            loadExistingTables();
+                        }, 500);
+                    }, 300);
+
+                    cleanupAllModals();
                 } else {
                     showAlert('error', data.message);
                 }
@@ -778,56 +789,47 @@
             });
         }
 
-        function showSuccessModal(tableName) {
-            // Create success modal if it doesn't exist
-            let successModal = document.getElementById('successModal');
-            if (!successModal) {
-                createSuccessModal();
-                successModal = document.getElementById('successModal');
-            }
-            
-            // Update modal content with template name
-            const modalMessage = document.getElementById('successModalMessage');
-            modalMessage.innerHTML = `Template <strong>${tableName}</strong> created and verified successfully`;
-            
-            // Show the modal
-            const modal = new bootstrap.Modal(successModal);
-            modal.show();
-            
-            // Auto-hide after 3 seconds
-            setTimeout(() => {
-                modal.hide();
-            }, 3000);
-        }
+        function showSuccessAlert(tableName) {
+            // Remove existing alerts
+            const existingAlerts = document.querySelectorAll('.success-alert');
+            existingAlerts.forEach(alert => alert.remove());
 
-        function createSuccessModal() {
-            const modalHTML = `
-                <div class="modal fade" id="successModal" tabindex="-1" aria-labelledby="successModalLabel" aria-hidden="true">
-                    <div class="modal-dialog modal-dialog-centered">
-                        <div class="modal-content">
-                            <div class="modal-header bg-success text-white">
-                                <h5 class="modal-title" id="successModalLabel">
-                                    <i class="fas fa-check-circle"></i> Success
-                                </h5>
-                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body text-center">
-                                <div class="mb-3">
-                                    <i class="fas fa-check-circle text-success" style="font-size: 3rem;"></i>
-                                </div>
-                                <p id="successModalMessage" class="fs-5"></p>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-success" data-bs-dismiss="modal">OK</button>
-                            </div>
+            const alertHTML = `
+                <div class="alert alert-success alert-dismissible fade show success-alert" 
+                    role="alert" 
+                    style="
+                        position: fixed; 
+                        top: 20px; 
+                        right: 20px; 
+                        z-index: 9999; 
+                        min-width: 300px;
+                        background-color: #d1e7dd;   /* Bootstrap's alert-success bg */
+                        color: #0f5132;              /* Text color */
+                        border-color: #badbcc;       /* Border color */
+                    ">
+                    <div class="d-flex align-items-center">
+                        <i class="fas fa-check-circle me-2" style="font-size: 1.5rem;"></i>
+                        <div>
+                            <strong>Success!</strong><br>
+                            Template <strong>${tableName}</strong> created successfully
                         </div>
                     </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
             `;
-            
-            // Append to body
-            document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+            document.body.insertAdjacentHTML('beforeend', alertHTML);
+
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                const alert = document.querySelector('.success-alert');
+                if (alert) {
+                    const bsAlert = bootstrap.Alert.getOrCreateInstance(alert);
+                    bsAlert.close();
+                }
+            }, 5000);
         }
+
 
         function toggleDefaultValue(element) {
             const row = element.closest('tr');
@@ -1626,6 +1628,26 @@
             if (draftIndicator) {
                 draftIndicator.style.display = 'none';
             }
+        }
+
+        function cleanupAllModals() {
+            // Remove all modal backdrops
+            const backdrops = document.querySelectorAll('.modal-backdrop');
+            backdrops.forEach(backdrop => backdrop.remove());
+            
+            // Remove modal-open class from body
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('overflow');
+            document.body.style.removeProperty('padding-right');
+            
+            // Dispose all modal instances
+            const modals = document.querySelectorAll('.modal');
+            modals.forEach(modal => {
+                const instance = bootstrap.Modal.getInstance(modal);
+                if (instance) {
+                    instance.dispose();
+                }
+            });
         }
 
         function initializeDataTables() {
