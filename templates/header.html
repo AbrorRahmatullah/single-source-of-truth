@@ -12,20 +12,36 @@
 </head>
 <body>
     <!-- Header -->
-    <div class="header">
-        <h1 class="header-title"></h1>
+    <div class="header" id="header">
+        <h1 class="header-title">Dashboard Single Source of Truth</h1>
         <div class="header-actions">
             <div class="user-dropdown" id="userDropdown">
-                <div class="user-info" id="userInfo">
-                    <div class="card-title-icon">👤</div>
-                    <span id="fullname">{{ fullname }}</span>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <div class="user-info" id="userInfo" tabindex="0" role="button" aria-haspopup="true" aria-expanded="false">
+                    <div class="card-title-icon" title="User Avatar">
+                        {% if fullname %}
+                            {{ fullname[0]|upper }}
+                        {% else %}
+                            👤
+                        {% endif %}
+                    </div>
+                    <span id="fullname">
+                        {% if fullname %}
+                            {{ fullname }}
+                        {% else %}
+                            Guest User
+                        {% endif %}
+                    </span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <path d="M6 9l6 6 6-6"/>
                     </svg>
                 </div>
-                <div class="dropdown-content">
-                    <a href="/change_password">Change Password</a>
-                    <a href="/logout">Logout</a>
+                <div class="dropdown-content" role="menu">
+                    <a href="/change_password" role="menuitem">
+                        🔐 Change Password
+                    </a>
+                    <a href="/logout" role="menuitem">
+                        🚪 Logout
+                    </a>
                 </div>
             </div>
         </div>
@@ -40,17 +56,142 @@
             const dropdown = document.getElementById('userDropdown');
             const trigger = document.getElementById('userInfo');
 
-            trigger.addEventListener('click', function (e) {
+            // Enhanced dropdown toggle with keyboard support
+            function toggleDropdown(e) {
                 e.stopPropagation();
+                const isActive = dropdown.classList.contains('active');
+                
                 dropdown.classList.toggle('active');
+                trigger.setAttribute('aria-expanded', !isActive);
+                
+                // Focus management
+                if (!isActive) {
+                    // Dropdown opened
+                    setTimeout(() => {
+                        const firstMenuItem = dropdown.querySelector('.dropdown-content a');
+                        if (firstMenuItem) {
+                            firstMenuItem.focus();
+                        }
+                    }, 50);
+                }
+            }
+
+            // Click event
+            trigger.addEventListener('click', toggleDropdown);
+
+            // Keyboard support
+            trigger.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleDropdown(e);
+                }
             });
 
-            // Klik di luar dropdown akan menutupnya
+            // Enhanced keyboard navigation for dropdown items
+            dropdown.addEventListener('keydown', function(e) {
+                const menuItems = Array.from(dropdown.querySelectorAll('.dropdown-content a'));
+                const currentIndex = menuItems.findIndex(item => item === document.activeElement);
+
+                switch(e.key) {
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        const nextIndex = currentIndex < menuItems.length - 1 ? currentIndex + 1 : 0;
+                        menuItems[nextIndex].focus();
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        const prevIndex = currentIndex > 0 ? currentIndex - 1 : menuItems.length - 1;
+                        menuItems[prevIndex].focus();
+                        break;
+                    case 'Escape':
+                        dropdown.classList.remove('active');
+                        trigger.setAttribute('aria-expanded', 'false');
+                        trigger.focus();
+                        break;
+                }
+            });
+
+            // Click outside to close dropdown
             document.addEventListener('click', function (e) {
                 if (!dropdown.contains(e.target)) {
                     dropdown.classList.remove('active');
+                    trigger.setAttribute('aria-expanded', 'false');
                 }
             });
+
+            // Close dropdown when clicking on menu items
+            dropdown.querySelectorAll('.dropdown-content a').forEach(link => {
+                link.addEventListener('click', function() {
+                    dropdown.classList.remove('active');
+                    trigger.setAttribute('aria-expanded', 'false');
+                });
+            });
+
+            // Add loading state example (if needed)
+            function showLoadingState() {
+                trigger.classList.add('loading');
+            }
+
+            function hideLoadingState() {
+                trigger.classList.remove('loading');
+            }
+
+            // Optional: Auto-hide dropdown on window resize
+            window.addEventListener('resize', function() {
+                dropdown.classList.remove('active');
+                trigger.setAttribute('aria-expanded', 'false');
+            });
+        });
+
+        // Sidebar Toggle Functionality
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const header = document.getElementById('header');
+            const mainContent = document.getElementById('mainContent');
+            
+            sidebar.classList.toggle('collapsed');
+            
+            // Save state to localStorage
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+        }
+
+        // User Dropdown Functionality  
+        function toggleDropdown() {
+            const dropdown = document.getElementById('userDropdown');
+            const userDropdown = dropdown.parentElement;
+            userDropdown.classList.toggle('active');
+        }
+
+        // Initialize sidebar state from localStorage
+        document.addEventListener('DOMContentLoaded', function() {
+            const sidebar = document.getElementById('sidebar');
+            const sidebarToggle = document.getElementById('sidebarToggle');
+            
+            // Load saved state
+            const savedState = localStorage.getItem('sidebarCollapsed');
+            if (savedState === 'true') {
+                sidebar.classList.add('collapsed');
+            }
+            
+            // Add click event to toggle button
+            sidebarToggle.addEventListener('click', toggleSidebar);
+            
+            // Keyboard support for toggle button
+            sidebarToggle.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleSidebar();
+                }
+            });
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(event) {
+            const userDropdown = document.querySelector('.user-dropdown');
+            if (userDropdown && !userDropdown.contains(event.target)) {
+                userDropdown.classList.remove('active');
+            }
         });
     </script>
 
