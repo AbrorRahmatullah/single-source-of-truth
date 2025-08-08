@@ -137,7 +137,10 @@
 
     function showCreateUserModal() {
         document.getElementById('createUserForm').reset();
-        loadDivisionsDropdown('division'); // Perbaiki ID yang benar
+        document.getElementById('username_error').textContent = '';
+        document.getElementById('email_error').textContent = '';
+        document.getElementById('createUserBtn').disabled = false;
+        loadDivisionsDropdown('division');
         new bootstrap.Modal(document.getElementById('createUserModal')).show();
     }
 
@@ -165,6 +168,93 @@
         }
     }
 
+    function checkUsername(username, userId = null, targetErrorId = 'username_error', targetButtonId = 'createUserBtn') {
+        if (!username || username.trim().length < 3) {
+            document.getElementById(targetErrorId).textContent = '';
+            updateSubmitButton();
+            return;
+        }
+
+        fetch('/users/check-username', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                username: username.trim(), 
+                user_id: userId 
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            const errorElement = document.getElementById(targetErrorId);
+            
+            if (data.success && data.exists) {
+                errorElement.textContent = 'Username sudah ada!';
+                errorElement.style.color = 'red';
+                errorElement.style.fontSize = '12px';
+                errorElement.style.marginTop = '5px';
+            } else {
+                errorElement.textContent = '';
+            }
+            updateSubmitButton();
+        })
+        .catch(error => {
+            console.error('Error checking username:', error);
+            document.getElementById(targetErrorId).textContent = '';
+            updateSubmitButton();
+        });
+    }
+
+    function checkEmail(email, userId = null, targetErrorId = 'email_error', targetButtonId = 'createUserBtn') {
+        // Validasi format email basic
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        
+        if (!email || !emailRegex.test(email.trim())) {
+            document.getElementById(targetErrorId).textContent = '';
+            updateSubmitButton();
+            return;
+        }
+
+        fetch('/users/check-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                email: email.trim(), 
+                user_id: userId 
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            const errorElement = document.getElementById(targetErrorId);
+            
+            if (data.success && data.exists) {
+                errorElement.textContent = 'Email sudah terdaftar!';
+                errorElement.style.color = 'red';
+                errorElement.style.fontSize = '12px';
+                errorElement.style.marginTop = '5px';
+            } else {
+                errorElement.textContent = '';
+            }
+            updateSubmitButton();
+        })
+        .catch(error => {
+            console.error('Error checking email:', error);
+            document.getElementById(targetErrorId).textContent = '';
+            updateSubmitButton();
+        });
+    }
+
+    function updateSubmitButton() {
+        const usernameError = document.getElementById('username_error') || document.getElementById('edit_username_error');
+        const emailError = document.getElementById('email_error') || document.getElementById('edit_email_error');
+        const submitBtn = document.getElementById('createUserBtn') || document.getElementById('editUserBtn');
+        
+        if (submitBtn) {
+            const hasError = (usernameError && usernameError.textContent) || 
+                            (emailError && emailError.textContent);
+            submitBtn.disabled = hasError;
+        }
+    }
+
 
     function editUser(id) {
         fetch(`/users/${id}`)
@@ -177,20 +267,24 @@
                 document.getElementById('edit_username').value = u.username;
                 document.getElementById('edit_fullname').value = u.fullname;
                 document.getElementById('edit_email').value = u.email;
+                
+                // Reset error messages untuk edit
+                document.getElementById('edit_username_error').textContent = '';
+                document.getElementById('edit_email_error').textContent = '';
+                document.getElementById('editUserBtn').disabled = false;
 
-                loadDivisionsDropdown('edit_division'); // Load dropdown dulu
+                loadDivisionsDropdown('edit_division');
                 setTimeout(() => {
                     document.getElementById('edit_division').value = u.division;
                     document.getElementById('edit_role').value = u.role_access;
                     new bootstrap.Modal(document.getElementById('editUserModal')).show();
-                }, 200); // Delay kecil agar dropdown sempat terisi
+                }, 200);
             })
             .catch(error => {
                 console.error('Error fetching user:', error);
                 showAlert('danger', 'Error loading user data');
             });
     }
-
 
     function loadDivisionsDropdown(targetSelectId) {
         fetch('/divisions/dropdown')
@@ -325,6 +419,43 @@
         
         // Load divisions for create modal (pre-load)
         loadDivisionsDropdown('division');
+
+        const createEmailInput = document.getElementById('email');
+        if (createEmailInput) {
+            createEmailInput.addEventListener('input', function() {
+                const email = this.value.trim();
+                checkEmail(email, null, 'email_error', 'createUserBtn');
+            });
+        }
+
+        // Email validation untuk edit user
+        const editEmailInput = document.getElementById('edit_email');
+        if (editEmailInput) {
+            editEmailInput.addEventListener('input', function() {
+                const email = this.value.trim();
+                const userId = document.getElementById('edit_user_id').value;
+                checkEmail(email, userId, 'edit_email_error', 'editUserBtn');
+            });
+        }
+        
+        // Username validation untuk create user (existing code)
+        const createUsernameInput = document.getElementById('username');
+        if (createUsernameInput) {
+            createUsernameInput.addEventListener('input', function() {
+                const username = this.value.trim();
+                checkUsername(username, null, 'username_error', 'createUserBtn');
+            });
+        }
+
+        // Username validation untuk edit user (existing code)
+        const editUsernameInput = document.getElementById('edit_username');
+        if (editUsernameInput) {
+            editUsernameInput.addEventListener('input', function() {
+                const username = this.value.trim();
+                const userId = document.getElementById('edit_user_id').value;
+                checkUsername(username, userId, 'edit_username_error', 'editUserBtn');
+            });
+        }
     });
 </script>
 {% endblock %}

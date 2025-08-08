@@ -9,7 +9,8 @@
         <div class="modal-body">
           <div class="mb-3">
             <label for="username" class="form-label">Username *</label>
-            <input type="text" class="form-control" id="username" name="username" required>
+            <input type="text" class="form-control" id="username" name="username" required minlength="3">
+            <div id="username_error" class="error-message"></div>
           </div>
           <div class="mb-3">
             <label for="password" class="form-label">Password *</label>
@@ -26,6 +27,7 @@
           <div class="mb-3">
             <label for="email" class="form-label">Email *</label>
             <input type="email" class="form-control" id="email" name="email" required>
+            <div id="email_error" class="error-message"></div>
           </div>
           <div class="mb-3">
             <label for="division" class="form-label">Division *</label>
@@ -45,7 +47,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Create</button>
+          <button type="submit" class="btn btn-primary" id="createUserBtn">Create</button>
         </div>
       </form>
     </div>

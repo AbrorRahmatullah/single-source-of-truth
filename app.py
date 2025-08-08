@@ -1355,6 +1355,28 @@ def safe_insert_single_record(table_name, columns, values):
         if conn:
             conn.close()
 
+def validate_password_strength(password):
+    """
+    Validasi password dengan kriteria:
+    - Minimal 9 karakter
+    - Mengandung huruf kapital
+    - Mengandung angka
+    - Mengandung karakter spesial
+    """
+    if len(password) < 9:
+        return False, "Password minimal 9 karakter"
+    
+    if not re.search(r'[A-Z]', password):
+        return False, "Password harus mengandung huruf kapital"
+    
+    if not re.search(r'\d', password):
+        return False, "Password harus mengandung angka"
+    
+    if not re.search(r'[@$!%*?&]', password):
+        return False, "Password harus mengandung karakter spesial (@$!%*?&)"
+    
+    return True, "Password valid"
+
          
 @app.route('/', methods=['GET', 'POST'])
 def login():
@@ -1409,26 +1431,61 @@ def change_password():
         password_confirm = request.form['password_confirm']
         username = session['username']
 
+        # Validasi password confirmation
         if new_password != password_confirm:
-            return render_alert("Passwords do not match.", 'change_password', username)
+            return render_template(
+                'change_password.html',
+                username=username,
+                division=division,
+                role_access=role_access,
+                fullname=fullname,
+                error_confirm="Passwords do not match.",
+                current_password=current_password,
+                new_password=new_password,
+                password_confirm=password_confirm
+            )
+
+        # Validasi password strength
+        is_valid, error_message = validate_password_strength(new_password)
+        if not is_valid:
+            return render_template(
+                'change_password.html',
+                username=username,
+                division=division,
+                role_access=role_access,
+                fullname=fullname,
+                error_strength=error_message,
+                current_password=current_password,
+                new_password=new_password,
+                password_confirm=password_confirm
+            )
 
         # Fetch the current hashed password from the database
         cur.execute("SELECT password_hash FROM MasterUsers WHERE username = ?", (username,))
         user = cur.fetchone()
 
         if not user or not bcrypt.check_password_hash(user[0], current_password):
-            return render_alert("Current password is incorrect.", 'change_password', username)
+            return render_template(
+                'change_password.html',
+                username=username,
+                division=division,
+                role_access=role_access,
+                fullname=fullname,
+                error_current="Current password is incorrect.",
+                current_password=current_password,
+                new_password=new_password,
+                password_confirm=password_confirm
+            )
             
         else:
             # Hash the new password and update the database
             new_password_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
             cur.execute("UPDATE MasterUsers SET password_hash = ? WHERE username = ?", (new_password_hash, username))
             conn.commit()
-            # flash("Password changed successfully.")
-            # return render_template('upload.html')
+            
             return '''
                 <script>
-                    alert("User registered successfully.");
+                    alert("Perubahan password berhasil dilakukan.");
                     window.location.href = "{}";
                 </script>
             '''.format(url_for('upload_file'))
@@ -2212,7 +2269,6 @@ def delete_table():
         return jsonify({'success': False, 'message': f'Error: {str(e)}'})
 
 # CRUD Users Management - Simplified Backend Code (Create & Delete Only)
-# Register route
 @app.route('/users', methods=['GET', 'POST'])
 def handle_users():
     if 'username' not in session:
@@ -2417,7 +2473,86 @@ def delete_user(id):
             cursor.close()
         if conn:
             conn.close()
-             
+
+# Tambahkan route baru untuk validasi username
+@app.route('/users/check-username', methods=['POST'])
+def check_username():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+    
+    data = request.get_json()
+    username = data.get('username')
+    user_id = data.get('user_id')  # Optional, untuk edit user
+    
+    if not username:
+        return jsonify({'success': False, 'message': 'Username is required'})
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if user_id:
+            # Untuk edit user - cek username selain user yang sedang diedit
+            cursor.execute("SELECT id FROM MasterUsers WHERE username = ? AND id != ?", (username, user_id))
+        else:
+            # Untuk create user baru
+            cursor.execute("SELECT id FROM MasterUsers WHERE username = ?", (username,))
+        
+        exists = cursor.fetchone() is not None
+        
+        return jsonify({
+            'success': True,
+            'exists': exists,
+            'message': 'Username already exists' if exists else 'Username available'
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+@app.route('/users/check-email', methods=['POST'])
+def check_email():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+    
+    data = request.get_json()
+    email = data.get('email')
+    user_id = data.get('user_id')  # Optional, untuk edit user
+    
+    if not email:
+        return jsonify({'success': False, 'message': 'Email is required'})
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if user_id:
+            # Untuk edit user - cek email selain user yang sedang diedit
+            cursor.execute("SELECT id FROM MasterUsers WHERE email = ? AND id != ?", (email, user_id))
+        else:
+            # Untuk create user baru
+            cursor.execute("SELECT id FROM MasterUsers WHERE email = ?", (email,))
+        
+        exists = cursor.fetchone() is not None
+        
+        return jsonify({
+            'success': True,
+            'exists': exists,
+            'message': 'Email already registered' if exists else 'Email available'
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()             
+
 # CRUD Divisions Management - Simplified Backend Code (Create & Delete Only)
 @app.route('/divisions-page')
 def divisions_page():

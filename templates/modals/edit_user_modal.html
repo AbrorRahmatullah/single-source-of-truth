@@ -10,7 +10,8 @@
           <input type="hidden" id="edit_user_id" name="id">
           <div class="mb-3">
             <label for="edit_username" class="form-label">Username *</label>
-            <input type="text" class="form-control" id="edit_username" name="username" required>
+            <input type="text" class="form-control" id="edit_username" name="username" required minlength="3">
+            <div id="edit_username_error" class="error-message"></div>
           </div>
           <div class="mb-3">
             <label for="edit_fullname" class="form-label">Full Name *</label>
@@ -19,6 +20,7 @@
           <div class="mb-3">
             <label for="edit_email" class="form-label">Email *</label>
             <input type="email" class="form-control" id="edit_email" name="email" required>
+            <div id="edit_email_error" class="error-message"></div>
           </div>
           <div class="mb-3">
             <label for="edit_division" class="form-label">Division *</label>
@@ -38,7 +40,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Changes</button>
+          <button type="submit" class="btn btn-primary" id="editUserBtn">Save Changes</button>
         </div>
       </form>
     </div>
