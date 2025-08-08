@@ -37,11 +37,17 @@
 
                     <form id="createTableForm">
                         <div class="grid-container">
-                            <div class="form-group">
+                            <div class="form-group position-relative">
                                 <label for="table_name" class="form-label">Nama Template</label>
-                                <input type="text" id="table_name" name="table_name" class="form-control" 
-                                    placeholder="Contoh: employee_data, customer_template" required>
-                                <div class="form-text">Nama Template harus dimulai dengan huruf dan hanya boleh mengandung huruf, angka, dan underscore</div>
+                                <div class="input-group">
+                                    <input type="text" id="table_name" name="table_name" class="form-control"
+                                        placeholder="Contoh: employee_data, customer_template" required>
+                                    <span id="tableNameCheckValidation" class="input-group-text bg-transparent border-0" 
+                                        style="font-size: 1.2rem;"></span>
+                                </div>
+                                <div class="form-text">
+                                    Nama Template tidak boleh menggunakan spasi dan harus dimulai dengan huruf dan hanya boleh mengandung huruf, angka, dan underscore
+                                </div>
                                 <div id="tableNameCheck" class="form-text"></div>
                             </div>
                             <div class="form-group">
@@ -56,7 +62,7 @@
                                 <label for="divisions" class="form-label">Divisi</label>
                                 {% if session.role_access == 'admin' %}
                                     <select id="divisions" name="divisions" class="form-control form-select" required>
-                                        <option value="">-- Pilih Template --</option>
+                                        <option value="">-- Pilih Divisi --</option>
                                         {% for division in divisions %}
                                         <option value="{{ division }}">{{division}}</option>
                                         {% endfor %}
@@ -252,6 +258,7 @@
         let tablesDataTable;
         let editColumnCount = 0;
         let currentTableToDelete = null;
+        let isTableNameAvailable = false;
 
         $(document).ready(function() {
             console.log('DOM ready - initializing...');
@@ -339,33 +346,43 @@
 
         function validateTableName(tableName) {
             const checkElement = $('#tableNameCheck');
-            
+
             if (!tableName) {
                 checkElement.text('').removeClass('text-success text-danger');
+                $('#createTemplateBtn').prop('disabled', true);
                 return;
             }
-            
-            // Check format: huruf awal, lalu huruf/angka/underscore
+
+            if (/\s/.test(tableName)) {
+                checkElement.html('<span class="text-danger">❌ Tidak diperbolehkan menggunakan spasi dalam penamaan template</span>');
+                $('#createTemplateBtn').prop('disabled', true);
+                validateCreateTemplateForm();
+                return;
+            }
+
             if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(tableName)) {
-                checkElement.text('❌ Format tidak valid').removeClass('text-success').addClass('text-danger');
+                checkElement.html('<span class="text-danger">❌ Format tidak valid (harus diawali huruf, hanya huruf/angka/underscore)</span>');
+                $('#createTemplateBtn').prop('disabled', true);
+                validateCreateTemplateForm();
                 return;
             }
 
-            // Tidak boleh mengandung kata ssot_ (case insensitive)
             if (/ssot_/i.test(tableName)) {
-                checkElement.text('❌ Nama template tidak boleh mengandung kata "ssot_"').removeClass('text-success').addClass('text-danger');
+                checkElement.html('<span class="text-danger">❌ Nama template tidak boleh mengandung kata "ssot_"</span>');
+                $('#createTemplateBtn').prop('disabled', true);
+                validateCreateTemplateForm();
                 return;
             }
 
-            // Clear previous timeout
             if (tableCheckTimeout) {
                 clearTimeout(tableCheckTimeout);
             }
 
-            // Check if table exists after delay
             tableCheckTimeout = setTimeout(() => {
                 checkTableExists(tableName);
             }, 500);
+
+            validateCreateTemplateForm();
         }
 
         function addTemplateColumnRow(tbody, index) {
@@ -498,34 +515,64 @@
         // Validasi tombol Save Template
         function validateSaveTemplateButton() {
             const rows = $('#templateColumnsTable tbody tr');
+            const columnNames = new Set();
+            let hasDuplicate = false;
             let isValid = true;
-            
+
+            rows.each(function () {
+                const columnName = $(this).find('.column-name-input').val().trim().toLowerCase();
+
+                if (!columnName) {
+                    isValid = false;
+                    $(this).find('.column-name-error').show().text('❌ Nama kolom tidak boleh kosong');
+                    $(this).find('.column-name-input').addClass('is-invalid');
+                    return; // lanjut ke row berikutnya
+                }
+
+                if (columnNames.has(columnName)) {
+                    hasDuplicate = true;
+                    $(this).find('.column-name-error').show().text('❌ Nama kolom tidak boleh sama');
+                    $(this).find('.column-name-input').addClass('is-invalid');
+                } else {
+                    columnNames.add(columnName);
+                    $(this).find('.column-name-error').hide();
+                    $(this).find('.column-name-input').removeClass('is-invalid');
+                }
+            });
+
             rows.each(function() {
                 const columnNameInput = $(this).find('.column-name-input');
                 const defaultValueInput = $(this).find('.default-value-input');
                 const allowNullCheckbox = $(this).find('.allow-null-checkbox');
-                
-                // Validasi nama kolom (tidak boleh ada spasi)
-                if (columnNameInput.val().includes(' ')) {
+
+                // Validasi spasi/whitespace di nama kolom
+                if (/\s/.test(columnNameInput.val())) {
                     isValid = false;
-                    return false;
+                    columnNameInput.addClass('is-invalid');
+                    $(this).find('.column-name-error').show().text('❌ Nama kolom tidak boleh mengandung spasi');
+                    return false; // hentikan loop jika ketemu error
                 }
-                
+
                 // Validasi default value jika Allow NULL tidak dicentang
                 if (!allowNullCheckbox.is(':checked') && !defaultValueInput.val().trim()) {
                     isValid = false;
+                    defaultValueInput.addClass('is-invalid');
                     return false;
+                } else {
+                    defaultValueInput.removeClass('is-invalid');
                 }
             });
-            
+
             // Update tombol Save Template di modal
             const saveButton = $('.modal-footer button[onclick="saveTemplateColumns()"]');
-            if (isValid) {
-                saveButton.prop('disabled', false);
-                saveButton.removeClass('btn-secondary').addClass('btn-success');
+            if (isValid && !hasDuplicate) {
+                saveButton.prop('disabled', false)
+                        .removeClass('btn-secondary')
+                        .addClass('btn-success');
             } else {
-                saveButton.prop('disabled', true);
-                saveButton.removeClass('btn-success').addClass('btn-secondary');
+                saveButton.prop('disabled', true)
+                        .removeClass('btn-success')
+                        .addClass('btn-secondary');
             }
         }
 
@@ -664,12 +711,15 @@
             const divisions = document.getElementById('divisions').value;
             
             const createTemplateBtn = document.getElementById('createTemplateBtn');
-            
-            // Check all validation conditions including column count >= 1
-            const isTableNameValid = tableName.length > 0;
+
+            const hasSpace = /\s/.test(tableName);
+            const invalidFormat = !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(tableName);
+            const containsSsot = /ssot_/i.test(tableName);
+
+            const isTableNameValid = tableName.length > 0 && !hasSpace && !invalidFormat && !containsSsot && isTableNameAvailable;
             const isColumnCountValid = columnCount >= 1 && !isNaN(columnCount);
             const isDivisionValid = divisions.length > 0;
-            
+
             if (isTableNameValid && isColumnCountValid && isDivisionValid) {
                 createTemplateBtn.disabled = false;
                 createTemplateBtn.classList.remove('btn-secondary');
@@ -680,6 +730,8 @@
                 createTemplateBtn.classList.add('btn-secondary');
             }
         }
+
+
 
         function saveTemplateColumns() {
             const tableName = document.getElementById('table_name').value.trim();
@@ -932,21 +984,36 @@
             fetch(`/check-table-exists/${encodeURIComponent(tableName)}`)
                 .then(response => response.json())
                 .then(data => {
-                    const checkElement = $('#tableNameCheck');
+                    const checkElement = $('#tableNameCheckValidation');
                     if (data.exists) {
-                        checkElement.text('❌ Template sudah ada').removeClass('text-success').addClass('text-danger');
+                        isTableNameAvailable = false;
+                        checkElement.text('❌')
+                                    .removeClass('text-success')
+                                    .addClass('text-danger');
+                        $('#createTemplateBtn').prop('disabled', true)
+                                            .removeClass('btn-success')
+                                            .addClass('btn-secondary');
                     } else {
-                        checkElement.text('✅ Nama template tersedia').removeClass('text-danger').addClass('text-success');
+                        isTableNameAvailable = true;
+                        checkElement.text('✅')
+                                    .removeClass('text-danger')
+                                    .addClass('text-success');
+                        validateCreateTemplateForm();
                     }
                 })
                 .catch(error => {
                     console.error('Error checking table:', error);
-                    $('#tableNameCheck')
-                        .text('⚠️ Terjadi kesalahan saat memeriksa template')
-                        .removeClass('text-success')
+                    isTableNameAvailable = false;
+                    $('#tableNameCheckValidation')
+                        .text('⚠️')
+                        .removeClass('text-success text-danger')
                         .addClass('text-warning');
+                    $('#createTemplateBtn').prop('disabled', true)
+                                        .removeClass('btn-success')
+                                        .addClass('btn-secondary');
                 });
         }
+
 
         function checkTableExistsBeforeSubmit(tableName) {
             return fetch(`/check-table-exists/${tableName}`)
@@ -960,7 +1027,7 @@
         }
 
         // Add table name validation - UNIFIED VERSION
-        function initializeTableNameValidation() {
+        /* function initializeTableNameValidation() {
             const tableNameInput = document.getElementById('table_name');
             if (!tableNameInput) return;
 
@@ -972,30 +1039,25 @@
                 
                 // Validate table name format
                 const validFormat = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(tableName);
-                const checkDiv = document.getElementById('tableNameCheck');
+                const checkDiv = document.getElementById('tableNameCheckValidation');
                 
                 if (tableName.length === 0) {
                     checkDiv.innerHTML = '';
                     return;
                 }
                 
-                if (!validFormat) {
-                    checkDiv.innerHTML = '<span style="color: #dc2626;">❌ Nama template tidak valid (harus dimulai huruf, hanya huruf/angka/underscore)</span>';
-                    return;
-                }
-                
                 // Show checking status
-                checkDiv.innerHTML = '<span style="color: #6b7280;">🔍 Memeriksa ketersediaan nama template...</span>';
+                checkDiv.innerHTML = '<span style="color: #6b7280;">🔍</span>';
                 
                 // Debounce the API call
                 tableCheckTimeout = setTimeout(() => {
                     checkTableExists(tableName);
                 }, 500);
             });
-        }
+        } */
 
         // Initialize table name validation when DOM is loaded
-        document.addEventListener('DOMContentLoaded', initializeTableNameValidation);
+        // document.addEventListener('DOMContentLoaded', initializeTableNameValidation);
 
         function removeColumn(id) {
             const columnDiv = document.getElementById(`column_${id}`);

@@ -25,23 +25,19 @@
                 <div class="card-body">
                     <div class="info-box">
                         <h3>ℹ️ Informasi Penting</h3>
-                        <ul>
-                            <li><strong>Primary Header:</strong> Anda bisa menentukan header utama sebagai patokan (opsional)</li>
-                            <li><strong>Format File:</strong> Mendukung .xlsx dan .xls (maksimal 16MB)</li>
-                        </ul>
+                        <strong>Format File:</strong> Mendukung .xlsx dan .xls (maksimal 16MB)
                     </div>
 
                     <form id="uploadForm" enctype="multipart/form-data">
                         <div class="grid-container">
                             <div class="form-group">
-                                <label for="table_name" class="form-label">Pilih Tabel Template</label>
+                                <label for="table_name" class="form-label">Pilih template</label>
                                 <select id="table_name" name="table_name" class="form-control form-select" required>
-                                    <option value="">-- Pilih Tabel Template --</option>
+                                    <option value="">-- Pilih template --</option>
                                     {% for table in template_tables %}
                                     <option value="{{ table }}">{{ table|replace('_', ' ')|title }}</option>
                                     {% endfor %}
                                 </select>
-                                <div class="form-text">Pilih tabel template yang sudah tersedia di database</div>
                             </div>
                             <div class="form-group">
                                 <label for="file" class="form-label">Pilih File Excel</label>
@@ -58,6 +54,7 @@
                             <div class="form-group">
                                 <label for="periode_date" class="form-label">Periode Date</label>
                                 <input type="date" id="periode_date" name="periode_date" class="form-control" required>
+                                <div class="form-text">Periode Date diambil dari form input, tidak dari file Excel</div>
                             </div>
                         </div>
                         <div class="btn-group">
@@ -190,7 +187,7 @@
             const tableName = tableSelect.value.trim();
 
             if (!tableName) {
-                showAlert('warning', 'Pilih tabel template terlebih dahulu');
+                showAlert('warning', 'Pilih template terlebih dahulu');
                 tableSelect.focus();
                 return;
             }
@@ -230,7 +227,6 @@
                             <li>
                                 <span class="column-name">${name}</span>
                                 <span class="column-details">${detail}</span>
-                                <span class="tag tag-required">Excel Required</span>
                             </li>`;
                     }).join('');
 
@@ -270,21 +266,6 @@
                             </ul>
                         </div>`;
 
-                    // Tambahkan informasi penting
-                    details += `
-                        <div class="info-card" style="background: #fefce8; border-color: #fde68a;">
-                            <div class="info-card-title" style="color: #92400e;">
-                                Informasi Penting
-                            </div>
-                            <ul class="info-list" style="color: #92400e;">
-                                <li><strong>Kolom Excel Required:</strong> Header ini harus ada di file Excel Anda</li>
-                                <li><strong>Kolom Otomatis:</strong> Tidak perlu ada di file Excel, ditambahkan otomatis oleh sistem</li>
-                                <li><strong>Periode Date:</strong> Diambil dari form input, tidak dari file Excel</li>
-                                <li><strong>Upload Date:</strong> Otomatis diisi dengan waktu upload saat ini</li>
-                            </ul>
-                        </div>
-                    `;
-
                     // Buat message content
                     let messageContent = `
                         <div class="result-text">
@@ -315,7 +296,7 @@
             
             // Enhanced validation
             if (!tableSelect.value) {
-                showAlert('warning', 'Pilih tabel template terlebih dahulu');
+                showAlert('warning', 'Pilih template terlebih dahulu');
                 tableSelect.focus();
                 return;
             }
@@ -581,7 +562,7 @@
                     <div class="value">${analysis.data_start_row}</div>
                 </div>
                 <div class="analysis-item">
-                    <div class="label">Jumlah Data</div>
+                    <div class="label">Jumlah Data (baris)</div>
                     <div class="value">${analysis.data_rows_available.toLocaleString()}</div>
                 </div>
             `;
@@ -591,37 +572,47 @@
             if (analysis.sample_data && analysis.sample_data.length > 0) {
                 sampleDataHtml += '<div class="sample-data"><table>';
                 
-                // Header row dengan numbering
+                // Header row dengan numbering - skip empty headers
                 sampleDataHtml += '<thead><tr><th style="width: 50px; text-align: center;">#</th>';
                 analysis.headers.forEach(header => {
                     const isEmpty = !header || header.trim() === '';
-                    sampleDataHtml += `<th class="${isEmpty ? 'empty' : ''}" title="${isEmpty ? 'Kolom kosong' : header}">
-                        ${isEmpty ? 'Empty Column' : header}
-                    </th>`;
+                    // Skip empty columns completely
+                    if (!isEmpty) {
+                        sampleDataHtml += `<th title="${header}">${header}</th>`;
+                    }
                 });
                 sampleDataHtml += '</tr></thead>';
                 
-                // Sample data rows dengan row numbers
+                // Sample data rows dengan row numbers - skip empty columns
                 sampleDataHtml += '<tbody>';
                 analysis.sample_data.forEach((row, index) => {
                     sampleDataHtml += `<tr><td style="text-align: center; font-weight: 600; color: #6b7280;">${index + 1}</td>`;
-                    row.forEach(cell => {
-                        const cellValue = cell || '';
-                        const isNumber = !isNaN(cellValue) && cellValue !== '';
-                        sampleDataHtml += `<td style="${isNumber ? 'text-align: right; font-family: monospace;' : ''}" title="${cellValue}">
-                            ${cellValue.length > 20 ? cellValue.substring(0, 20) + '...' : cellValue}
-                        </td>`;
+                    row.forEach((cell, cellIndex) => {
+                        // Only show data for non-empty header columns
+                        const header = analysis.headers[cellIndex];
+                        const headerIsEmpty = !header || header.trim() === '';
+                        
+                        if (!headerIsEmpty) {
+                            const cellValue = cell || '';
+                            const isNumber = !isNaN(cellValue) && cellValue !== '';
+                            sampleDataHtml += `<td style="${isNumber ? 'text-align: right; font-family: monospace;' : ''}" title="${cellValue}">
+                                ${cellValue.length > 20 ? cellValue.substring(0, 20) + '...' : cellValue}
+                            </td>`;
+                        }
                     });
                     sampleDataHtml += '</tr>';
                 });
                 sampleDataHtml += '</tbody></table></div>';
                 
-                // Add summary info
+                // Add summary info - only count actual data columns
+                const validHeaders = analysis.headers.filter(h => h && h.trim() !== '');
+                const emptyHeaderCount = analysis.headers.filter(h => !h || h.trim() === '').length;
+                
                 sampleDataHtml += `
                     <div style="margin-top: 15px; padding: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 0.875rem;">
-                        <strong>📊 Ringkasan:</strong> Menampilkan ${Math.min(3, analysis.sample_data.length)} dari ${analysis.data_rows_available} baris data.
-                        ${analysis.headers.filter(h => !h || h.trim() === '').length > 0 ? 
-                            `<br><span style="color: #d97706;">⚠️ Ditemukan ${analysis.headers.filter(h => !h || h.trim() === '').length} kolom kosong.</span>` : 
+                        <strong>📊 Ringkasan:</strong> Menampilkan ${Math.min(3, analysis.sample_data.length)} dari ${analysis.data_rows_available} baris data dengan ${validHeaders.length} kolom valid.
+                        ${emptyHeaderCount > 0 ? 
+                            `<br><span style="color: #d97706;">⚠️ ${emptyHeaderCount} kolom kosong disembunyikan dari preview.</span>` : 
                             '<br><span style="color: #059669;">✅ Semua kolom memiliki header.</span>'
                         }
                     </div>
@@ -757,17 +748,39 @@
         function createResultDetails(data) {
             let details = '<table style="width: 100%; margin-top: 15px;">';
             details += `<tr><th style="width: 40%;">Baris Berhasil Insert</th><td><strong style="color: #059669;">${(data.inserted_rows || 0).toLocaleString()}</strong></td></tr>`;
-            details += `<tr><th>Baris Dilewati</th><td><strong style="color: #d97706;">${(data.skipped_rows || 0).toLocaleString()}</strong></td></tr>`;
-            details += `<tr><th>Baris Error</th><td><strong style="color: #dc2626;">${(data.error_rows || 0).toLocaleString()}</strong></td></tr>`;
             
             // Tambahkan info sheet yang digunakan
             if (data.header_info && data.header_info.sheet_used) {
                 details += `<tr><th>Sheet Digunakan</th><td><strong>${data.header_info.sheet_used}</strong></td></tr>`;
             }
             
-            // Tambahkan info periode date
+            // Tambahkan info periode date dengan format Indonesia
             if (data.periode_date) {
-                details += `<tr><th>Periode Date</th><td><strong>${data.periode_date}</strong></td></tr>`;
+                // Function to format date to Indonesian
+                function formatToIndonesianDate(dateString) {
+                    const monthNames = [
+                        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+                        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+                    ];
+                    
+                    const dayNames = [
+                        'Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'
+                    ];
+                    
+                    // Parse the date string
+                    const date = new Date(dateString);
+                    
+                    // Get day name, day, month name, and year
+                    const dayName = dayNames[date.getDay()];
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const monthName = monthNames[date.getMonth()];
+                    const year = date.getFullYear();
+                    
+                    return `${dayName}, ${day} ${monthName} ${year}`;
+                }
+                
+                const formattedDate = formatToIndonesianDate(data.periode_date);
+                details += `<tr><th>Periode Date</th><td><strong>${formattedDate}</strong></td></tr>`;
             }
             
             if (data.upload_date) {
@@ -989,9 +1002,6 @@
                     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
                         <strong>📄 ${file.name}</strong>
                         <span>${formatFileSize(file.size)}</span>
-                    </div>
-                    <div style="color: #6b7280;">
-                        Type: ${file.type || 'Unknown'} • Modified: ${new Date(file.lastModified).toLocaleDateString('id-ID')}
                     </div>
                 `;
                 

@@ -65,6 +65,14 @@
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
                     <div class="modal-body">
+                        <!-- Alert Container inside Modal -->
+                        <div id="modalAlertContainer" class="mb-3" style="display: none;">
+                            <div class="alert alert-dismissible fade show" role="alert">
+                                <span id="modalAlertMessage"></span>
+                                <button type="button" class="btn-close" onclick="hideModalAlert()" aria-label="Close"></button>
+                            </div>
+                        </div>
+                        
                         <div class="mb-3">
                             <label for="division_name" class="form-label">Division Name <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="division_name" name="division_name" required maxlength="100" placeholder="Enter division name">
@@ -92,6 +100,14 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
+                    <!-- Alert Container inside Delete Modal -->
+                    <div id="deleteModalAlertContainer" class="mb-3" style="display: none;">
+                        <div class="alert alert-dismissible fade show" role="alert">
+                            <span id="deleteModalAlertMessage"></span>
+                            <button type="button" class="btn-close" onclick="hideDeleteModalAlert()" aria-label="Close"></button>
+                        </div>
+                    </div>
+                    
                     <p>Are you sure you want to delete this division?</p>
                     <p><strong>Division:</strong> <span id="deleteDivisionName"></span></p>
                     <input type="hidden" id="deleteDivisionId">
@@ -172,6 +188,7 @@
         function showCreateDivisionModal() {
             const modal = new bootstrap.Modal(document.getElementById('createDivisionModal'));
             document.getElementById('createDivisionForm').reset();
+            hideModalAlert(); // Hide any existing alerts in modal
             modal.show();
         }
 
@@ -179,9 +196,74 @@
         function deleteDivision(id, name) {
             document.getElementById('deleteDivisionId').value = id;
             document.getElementById('deleteDivisionName').textContent = name;
+            hideDeleteModalAlert(); // Hide any existing alerts in modal
             
             const modal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
             modal.show();
+        }
+
+        // Show alert inside modal
+        function showModalAlert(type, message) {
+            const alertContainer = document.getElementById('modalAlertContainer');
+            const alertMessage = document.getElementById('modalAlertMessage');
+            const alertElement = alertContainer.querySelector('.alert');
+            
+            // Remove existing alert classes
+            alertElement.classList.remove('alert-success', 'alert-danger', 'alert-warning');
+            
+            // Add appropriate alert class
+            const alertClass = type === 'success' ? 'alert-success' : type === 'warning' ? 'alert-warning' : 'alert-danger';
+            alertElement.classList.add(alertClass);
+            
+            // Set message with icon
+            const alertIcon = type === 'success' ? '✅' : type === 'warning' ? '⚠️' : '❌';
+            alertMessage.innerHTML = `${alertIcon} ${message}`;
+            
+            // Show alert
+            alertContainer.style.display = 'block';
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                hideModalAlert();
+            }, 5000);
+        }
+
+        // Hide modal alert
+        function hideModalAlert() {
+            const alertContainer = document.getElementById('modalAlertContainer');
+            alertContainer.style.display = 'none';
+        }
+
+        // Show alert inside delete modal
+        function showDeleteModalAlert(type, message) {
+            const alertContainer = document.getElementById('deleteModalAlertContainer');
+            const alertMessage = document.getElementById('deleteModalAlertMessage');
+            const alertElement = alertContainer.querySelector('.alert');
+            
+            // Remove existing alert classes
+            alertElement.classList.remove('alert-success', 'alert-danger', 'alert-warning');
+            
+            // Add appropriate alert class
+            const alertClass = type === 'success' ? 'alert-success' : type === 'warning' ? 'alert-warning' : 'alert-danger';
+            alertElement.classList.add(alertClass);
+            
+            // Set message with icon
+            const alertIcon = type === 'success' ? '✅' : type === 'warning' ? '⚠️' : '❌';
+            alertMessage.innerHTML = `${alertIcon} ${message}`;
+            
+            // Show alert
+            alertContainer.style.display = 'block';
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                hideDeleteModalAlert();
+            }, 5000);
+        }
+
+        // Hide delete modal alert
+        function hideDeleteModalAlert() {
+            const alertContainer = document.getElementById('deleteModalAlertContainer');
+            alertContainer.style.display = 'none';
         }
 
         // Handle create division form submission
@@ -190,13 +272,16 @@
             
             const divisionName = document.getElementById('division_name').value.trim();
             if (!divisionName) {
-                showAlert('error', 'Nama divisi harus diisi');
+                showModalAlert('error', 'Nama divisi harus diisi');
                 return;
             }
 
             const submitButton = this.querySelector('button[type="submit"]');
             submitButton.disabled = true;
             submitButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Membuat...';
+
+            // Hide any existing alerts
+            hideModalAlert();
 
             fetch('/divisions', {
                 method: 'POST',
@@ -219,13 +304,13 @@
                         loadExistingDivisions();
                     }, 500);
                 } else {
-                    // Show error message upfront
-                    showAlert('error', data.message);
+                    // Show error message inside modal
+                    showModalAlert('error', data.message);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                showAlert('error', 'Terjadi kesalahan saat membuat divisi');
+                showModalAlert('error', 'Terjadi kesalahan saat membuat divisi');
             })
             .finally(() => {
                 submitButton.disabled = false;
@@ -244,6 +329,9 @@
             deleteButton.disabled = true;
             deleteButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Menghapus...';
 
+            // Hide any existing alerts
+            hideDeleteModalAlert();
+
             fetch(`/divisions/${divisionId}`, {
                 method: 'DELETE'
             })
@@ -261,12 +349,13 @@
                         loadExistingDivisions();
                     }, 500);
                 } else {
-                    showAlert('error', data.message);
+                    // Show error message inside modal
+                    showDeleteModalAlert('error', data.message);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                showAlert('error', 'Terjadi kesalahan saat menghapus divisi');
+                showDeleteModalAlert('error', 'Terjadi kesalahan saat menghapus divisi');
             })
             .finally(() => {
                 deleteButton.disabled = false;
@@ -356,7 +445,7 @@
             console.log('DataTable populated and drawn');
         }
 
-        // Show alert messages
+        // Show alert messages (for main page alerts)
         function showAlert(type, message) {
             // Remove existing alerts
             $('.alert').remove();
@@ -403,7 +492,7 @@
             }, 3000);
         }
 
-        // Create success modal HTML (same as Create Template)
+        // Create success modal HTML
         function createSuccessModal() {
             const modalHTML = `
                 <div class="modal fade" id="successModal" tabindex="-1" aria-labelledby="successModalLabel" aria-hidden="true">
@@ -436,6 +525,11 @@
         // Handle modal close events
         document.getElementById('createDivisionModal').addEventListener('hidden.bs.modal', function () {
             document.getElementById('createDivisionForm').reset();
+            hideModalAlert(); // Hide alerts when modal closes
+        });
+
+        document.getElementById('deleteConfirmModal').addEventListener('hidden.bs.modal', function () {
+            hideDeleteModalAlert(); // Hide alerts when modal closes
         });
     </script>
 {% endblock %}

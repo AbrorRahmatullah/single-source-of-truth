@@ -779,6 +779,7 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
         processed_df = pd.DataFrame(processed_data)
 
         # Insert ke database setelah proses dan validasi
+        print(f"Data yang memiliki periode date: {periode_date}")
         result = insert_to_database(processed_df, table_name, periode_date, replace_existing=True)
 
         result['header_info'] = {
@@ -1387,8 +1388,22 @@ def change_password():
     if 'username' not in session:
         flash("You need to log in first.")
         return redirect(url_for('login'))
+    
+    role_access = session.get('role_access')
+    fullname = session.get('fullname')
+    username = session.get('username')
+    division = session.get('division')
+    
+    if request.method == 'GET':
+        return render_template(
+            'change_password.html',
+            username=username,
+            division=division,
+            role_access=role_access,
+            fullname=fullname
+        )
 
-    if request.method == 'POST':
+    elif request.method == 'POST':
         current_password = request.form['current_password']
         new_password = request.form['new_password']
         password_confirm = request.form['password_confirm']
@@ -1417,8 +1432,6 @@ def change_password():
                     window.location.href = "{}";
                 </script>
             '''.format(url_for('upload_file'))
-
-    return render_template('change_password.html')
 
 # Logout Route
 @app.route('/logout')
@@ -1489,6 +1502,7 @@ def upload_file():
             file_path = os.path.join(upload_folder, filename)
             file.save(file_path)
             
+            print(f"Periode Date: {periode_date}")
             # Proses file
             result = process_excel_file(file_path, table_name, primary_header, sheet_name, periode_date)
             
