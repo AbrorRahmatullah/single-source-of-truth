@@ -16,13 +16,14 @@ from flask_bcrypt import Bcrypt
 from app.config import get_db_connection
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.secret_key = 'rahasiayangsangatrahasia'  # Ganti dengan secret key yang kuat
 bcrypt = Bcrypt(app)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
-# Set session lifetime to 30 minutes
-app.permanent_session_lifetime = timedelta(minutes=30)
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.secret_key = 'rahasiayangsangatrahasia'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+
+# Set idle session lifetime to 30 minutes
+IDLE_TIMEOUT = timedelta(minutes=30)
 
 # Pastikan folder upload ada
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -30,6 +31,22 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Konfigurasi logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+@app.before_request
+def check_idle_timeout():
+    # Abaikan pengecekan di halaman login atau static file
+    if request.endpoint in ['login', 'static']:
+        return
+
+    last_activity = session.get("last_activity")
+    if last_activity:
+        last_activity_dt = datetime.fromisoformat(last_activity)  # konversi dari string ke datetime
+        if datetime.now() - last_activity_dt > IDLE_TIMEOUT:
+            session.clear()
+            return redirect(url_for("login"))
+
+    # Update waktu terakhir aktivitas
+    session["last_activity"] = datetime.now().isoformat()
 
 def render_alert(message, redirect_url, username, fullname, email, role_access=None, division=None):
     return '''
@@ -485,10 +502,15 @@ def validate_and_convert_value(value, column_info, column_name):
     """
     Validate and convert value based on column type and constraints
     Returns: (converted_value, is_valid, error_message)
+    PERBAIKAN: Handle database default marker
     """
     try:
         # Handle NULL values first
         processed_value = handle_null_values_for_column(value, {**column_info, 'name': column_name})
+        
+        # PERBAIKAN: Skip validasi untuk database default marker
+        if processed_value == '__USE_DATABASE_DEFAULT__':
+            return processed_value, True, ""
         
         # If processed value is None (valid NULL), return it
         if processed_value is None:
@@ -565,11 +587,12 @@ def validate_and_convert_value(value, column_info, column_name):
             
     except Exception as e:
         return None, False, f"Validation error: {str(e)}"
-    
+
 def validate_batch_data(df, columns_info):
     """
     Validate entire batch of data before insert
     Returns: (validated_df, is_valid, validation_errors)
+    PERBAIKAN: Handle database default marker
     """
     validation_errors = []
     validated_data = {}
@@ -598,16 +621,21 @@ def validate_batch_data(df, columns_info):
                 else:
                     row_data[col] = converted_value
             else:
-                # Column not in database schema
-                row_errors.append(f"Row {idx + 1}, Column '{col}': Column not found in database schema")
+                # PERBAIKAN: Handle kolom yang tidak ada di schema database
+                # Ini mungkin kolom yang akan di-skip atau kolom otomatis
+                row_data[col] = row[col]
         
         # If any validation error in this row, record it
         if row_errors:
             validation_errors.extend(row_errors)
-        else:
-            # Add validated row data
-            for col in df.columns:
-                validated_data[col].append(row_data.get(col))
+        
+        # PERBAIKAN: Selalu tambahkan data row, bahkan jika ada error
+        # Ini untuk mempertahankan struktur DataFrame
+        for col in df.columns:
+            if col in row_data:
+                validated_data[col].append(row_data[col])
+            else:
+                validated_data[col].append(row[col])  # Use original value if not processed
     
     # If any validation errors, return failure
     if validation_errors:
@@ -802,13 +830,134 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
         logger.error(f"Error processing Excel file: {str(e)}")
         raise
 
+def insert_to_database(df, table_name, periode_date=None, replace_existing=True):
+    """
+    Insert dataframe ke SQL Server table - data sudah tervalidasi
+    Includes period_date and upload_date automatic columns
+    PERBAIKAN: Handle database default values
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # PERBAIKAN: Filter kolom yang menggunakan database default
+        # Check which columns have database defaults
+        columns_with_defaults = {}
+        for col in df.columns:
+            # Check if any row in this column has the database default marker
+            has_default_marker = df[col].astype(str).str.contains('__USE_DATABASE_DEFAULT__').any()
+            if has_default_marker:
+                columns_with_defaults[col] = True
+
+        logger.info(f"Kolom dengan database default: {list(columns_with_defaults.keys())}")
+
+        # PERBAIKAN: Build dynamic column list per row
+        successful_inserts = 0
+        current_datetime = datetime.now()
+        
+        # Delete existing data if replace_existing is True
+        if replace_existing and periode_date:
+            delete_query = f"DELETE FROM {table_name} WHERE period_date = ?"
+            cursor.execute(delete_query, (periode_date,))
+            logger.info(f"Data sebelumnya dengan periode {periode_date} telah dihapus dari {table_name}")
+
+        # PERBAIKAN: Process each row individually to handle different column sets
+        for idx, row in df.iterrows():
+            try:
+                # Build column list and values for this specific row
+                insert_columns = []
+                insert_values = []
+                placeholders = []
+
+                # Process data columns
+                for col in df.columns:
+                    raw_value = row[col]
+                    
+                    # PERBAIKAN: Skip kolom jika menggunakan database default
+                    if str(raw_value) == '__USE_DATABASE_DEFAULT__':
+                        logger.debug(f"Row {idx + 1}: Skipping column '{col}' - using database default")
+                        continue
+                    
+                    # Include column in insert
+                    insert_columns.append(f'[{col}]')
+                    placeholders.append('?')
+                    
+                    # Normalize value
+                    dtype = str(df[col].dtype)
+                    value = normalize_value(raw_value, dtype)
+                    insert_values.append(value)
+
+                # Add automatic columns
+                insert_columns.extend(['[period_date]', '[upload_date]'])
+                placeholders.extend(['?', 'GETDATE()'])
+                insert_values.append(periode_date)  # period_date value
+                # upload_date uses GETDATE() in SQL, no value needed
+
+                if not insert_columns:
+                    logger.warning(f"Row {idx + 1}: No columns to insert, skipping")
+                    continue
+
+                # Build and execute query for this row
+                insert_query = f"INSERT INTO {table_name} ({', '.join(insert_columns)}) VALUES ({', '.join(placeholders)})"
+                
+                logger.debug(f"Row {idx + 1} Query: {insert_query}")
+                logger.debug(f"Row {idx + 1} Values: {insert_values}")
+                
+                cursor.execute(insert_query, insert_values)
+                successful_inserts += 1
+
+            except Exception as row_error:
+                logger.error(f"Error inserting row {idx + 1}: {str(row_error)}")
+                # Continue with next row instead of failing completely
+                continue
+
+        conn.commit()
+        logger.info(f"Berhasil insert {successful_inserts} dari {len(df)} baris")
+
+        return {
+            'success': True,
+            'message': f'Berhasil insert {successful_inserts} baris data',
+            'inserted_rows': successful_inserts,
+            'skipped_rows': len(df) - successful_inserts,
+            'error_rows': 0,
+            'columns_used': [col for col in df.columns.tolist() if col not in columns_with_defaults],
+            'columns_with_defaults': list(columns_with_defaults.keys()),
+            'periode_date': periode_date,
+            'upload_date': current_datetime.strftime('%Y-%m-%d %H:%M:%S')
+        }
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error inserting to database: {str(e)}")
+        return {
+            'success': False,
+            'message': f'Error saat insert ke database: {str(e)}',
+            'inserted_rows': 0,
+            'skipped_rows': 0,
+            'error_rows': len(df) if 'df' in locals() else 0
+        }
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 def normalize_value(value, dtype=None):
     """
     Normalisasi nilai untuk insert ke SQL Server:
     - 'N/A', '', 'None', 'null', NaN => None (untuk kolom non-numeric)
     - '-' => 0 jika numeric, else None
     - Membersihkan tanda kurung & kutip jika ada
+    PERBAIKAN: Handle database default marker
     """
+    # PERBAIKAN: Handle database default marker - return as-is tanpa processing
+    if str(value) == '__USE_DATABASE_DEFAULT__':
+        return value
+    
     if pd.isna(value):
         return 0 if dtype and ('int' in dtype or 'float' in dtype) else None
 
@@ -824,167 +973,87 @@ def normalize_value(value, dtype=None):
         return 0 if dtype and ('int' in dtype or 'float' in dtype) else None
 
     return value
-
-def insert_to_database(df, table_name, periode_date=None, replace_existing=True):
-
-    """
-    Insert dataframe ke SQL Server table - data sudah tervalidasi
-    Includes period_date and upload_date automatic columns
-    """
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # Kolom yang akan diinsert (sudah difilter dan di-rename)
-        insert_columns = list(df.columns)
-
-        # Add automatic columns to the insert list
-        insert_columns.extend(['period_date', 'upload_date'])
-
-        if not df.columns.tolist():
-            raise ValueError("DataFrame tidak memiliki kolom valid untuk diinsert")
-
-
-        logger.info(f"Kolom yang akan diinsert: {insert_columns}")
-
-        # Siapkan query INSERT
-        placeholders = ', '.join(['?' for _ in insert_columns])
-        insert_query = f"INSERT INTO {table_name} ({', '.join(f'[{col}]' for col in insert_columns)}) VALUES ({placeholders})"
-        
-        logger.info(f"Query: {insert_query}")
-
-        # Siapkan data untuk insert - data sudah tervalidasi dan terkonversi
-        successful_inserts = 0
-        batch_data = []
-        current_datetime = datetime.now()
-
-        for idx, row in df.iterrows():
-            row_data = []
-
-            # Ambil nilai yang sudah tervalidasi dan terkonversi untuk kolom data
-            for col in df.columns:
-                raw_value = row[col]
-                dtype = str(df[col].dtype)
-                value = normalize_value(raw_value, dtype)
-                row_data.append(value)
-            
-            # Add automatic column values
-            row_data.append(periode_date)  # period_date
-            row_data.append(current_datetime)  # upload_date
-            
-            batch_data.append(row_data)
-
-        # Insert semua data sekaligus menggunakan executemany untuk efisiensi
-        try:
-            if replace_existing and periode_date:
-                delete_query = f"DELETE FROM {table_name} WHERE period_date = ?"
-                cursor.execute(delete_query, (periode_date,))
-                logger.info(f"Data sebelumnya dengan periode {periode_date} telah dihapus dari {table_name}")
-                
-            cursor.executemany(insert_query, batch_data)
-            successful_inserts = len(batch_data)
-            conn.commit()
-            
-            logger.info(f"Berhasil insert {successful_inserts} baris")
-
-            return {
-                'success': True,
-                'message': f'Berhasil insert {successful_inserts} baris data',
-                'inserted_rows': successful_inserts,
-                'skipped_rows': 0,
-                'error_rows': 0,
-                'columns_used': df.columns.tolist(),
-                'periode_date': periode_date,
-                'upload_date': current_datetime.strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
-        except Exception as insert_error:
-            conn.rollback()
-            logger.error(f"Error saat insert batch: {str(insert_error)}")
-            return {
-                'success': False,
-                'message': f'Error saat insert ke database: {str(insert_error)}',
-                'inserted_rows': 0,
-                'skipped_rows': 0,
-                'error_rows': len(batch_data)
-            }
-
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"Error inserting to database: {str(e)}")
-        raise
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
+    
 def process_default_value(default_value, column_info):
     """
     Process default value based on column type
+    PERBAIKAN: Fungsi ini sekarang hanya untuk generate nilai default eksplisit
     """
     col_type = column_info.get('data_type', '').upper()
     
+    # PERBAIKAN: Jangan proses default value yang berbentuk SQL function atau constraint
+    default_str = str(default_value).strip()
+    
+    # Skip SQL Server constraint format seperti ((1)), (getdate()), etc.
+    if default_str.startswith('((') and default_str.endswith('))'):
+        return '__USE_DATABASE_DEFAULT__'
+    elif default_str.startswith('(') and default_str.endswith(')'):
+        # Check if it's a SQL function
+        inner_value = default_str[1:-1].strip()
+        if inner_value.upper() in ['GETDATE', 'GETUTCDATE', 'SYSDATETIME', 'CURRENT_TIMESTAMP']:
+            return '__USE_DATABASE_DEFAULT__'
+        # If it's just wrapped value like (1), extract it
+        default_str = inner_value
+    
     try:
         if col_type in ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR', 'TEXT']:
-            return str(default_value)
+            # Remove quotes if present
+            if default_str.startswith("'") and default_str.endswith("'"):
+                default_str = default_str[1:-1]
+            return str(default_str)
             
         elif col_type == 'BIT':
-            if str(default_value).lower() in ['1', 'true']:
+            if default_str.lower() in ['1', 'true']:
                 return True
-            elif str(default_value).lower() in ['0', 'false']:
+            elif default_str.lower() in ['0', 'false']:
                 return False
             else:
-                return bool(int(default_value))
+                return bool(int(default_str))
                 
         elif col_type in ['INT', 'BIGINT', 'SMALLINT', 'TINYINT']:
-            return int(float(default_value))
+            return int(float(default_str))
             
         elif col_type in ['DECIMAL', 'NUMERIC', 'FLOAT', 'REAL']:
-            return float(default_value)
+            return float(default_str)
             
         elif col_type in ['DATE', 'DATETIME', 'DATETIME2']:
-            # Handle SQL functions
-            if str(default_value).upper() in ['GETDATE()', 'GETUTCDATE()', 'SYSDATETIME()']:
-                from datetime import datetime
-                return datetime.now()
+            # PERBAIKAN: Untuk date/datetime, selalu gunakan database default jika ada function
+            if default_str.upper() in ['GETDATE()', 'GETUTCDATE()', 'SYSDATETIME()', 'CURRENT_TIMESTAMP']:
+                return '__USE_DATABASE_DEFAULT__'
             else:
                 # Try to parse date string
                 from datetime import datetime
                 date_formats = ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d/%m/%Y']
                 for fmt in date_formats:
                     try:
-                        return datetime.strptime(str(default_value), fmt)
+                        return datetime.strptime(default_str, fmt)
                     except ValueError:
                         continue
-                return default_value
+                # If can't parse, let database handle it
+                return '__USE_DATABASE_DEFAULT__'
                 
         elif col_type == 'TIME':
             from datetime import datetime, time
             time_formats = ['%H:%M:%S', '%H:%M']
             for fmt in time_formats:
                 try:
-                    parsed_time = datetime.strptime(str(default_value), fmt).time()
+                    parsed_time = datetime.strptime(default_str, fmt).time()
                     return parsed_time
                 except ValueError:
                     continue
-            return default_value
+            return '__USE_DATABASE_DEFAULT__'
             
         else:
-            return str(default_value)
+            return str(default_str)
             
     except (ValueError, TypeError) as e:
         logger.warning(f"Error processing default value '{default_value}' for column '{column_info['name']}': {str(e)}")
-        return default_value
+        return '__USE_DATABASE_DEFAULT__'
 
 def handle_null_values_for_column(value, column_info):
     """
     Handle NULL values based on column configuration
-    Improved version with better type handling
+    Improved version with better type handling and default value processing
     """
     # Check if value is considered "null" in various formats
     null_indicators = [None, '', 'NULL', 'null', 'Null', 'N/A', 'n/a', 'NA', 'na', '#N/A']
@@ -999,23 +1068,21 @@ def handle_null_values_for_column(value, column_info):
         if column_info.get('is_nullable', False):
             return None  # Return None untuk NULL database value
         else:
-            # Jika kolom tidak allow NULL, cek default value dulu
             default_value = column_info.get('default_value')
             if default_value is not None and str(default_value).strip() != '':
-                # Process default value berdasarkan tipe kolom
+                # INI SATU-SATUNYA TEMPAT PEMANGGILAN process_default_value
                 return process_default_value(default_value, column_info)
             else:
-                # Jika tidak ada default value, lempar error dengan informasi kolom
                 col_name = column_info.get('name', 'Unknown')
                 raise ValueError(f"Column '{col_name}' cannot be NULL and has no default value")
     
     # If not null, return the value as is (will be processed later based on column type)
     return value
 
-def get_template_tables():
+def get_template_tables(role_access=None, division=None):
     """
-    Mendapatkan semua nama tabel yang mengandung kata 'template' dari database
-    Returns: list of table names
+    Mendapatkan daftar template dari MasterCreator.
+    Jika role_access = 'user', hanya kembalikan template yang sesuai division user.
     """
     conn = None
     cursor = None
@@ -1024,11 +1091,19 @@ def get_template_tables():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT template_name 
-            FROM MasterCreator
-            ORDER BY create_date DESC
-        """)
+        if role_access and role_access.lower() == 'user':
+            cursor.execute("""
+                SELECT template_name
+                FROM MasterCreator
+                WHERE division_name = ?
+                ORDER BY create_date DESC
+            """, (division,))
+        else:
+            cursor.execute("""
+                SELECT template_name
+                FROM MasterCreator
+                ORDER BY create_date DESC
+            """)
         
         tables = cursor.fetchall()
         return [table[0] for table in tables]
@@ -1510,7 +1585,25 @@ def upload_file():
     
     if request.method == 'GET':
         # Mendapatkan daftar tabel template untuk dropdown
-        template_tables = get_template_tables()
+        template_tables = get_template_tables(role_access, division)
+        
+        if role_access.lower() == 'user':
+            # Ambil hanya tabel yang sesuai division
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT table_name 
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN MasterDivisions d ON t.TABLE_SCHEMA = 'dbo'
+                WHERE d.division_name = ?
+            """, (division,))
+            allowed_tables = [row[0] for row in cursor.fetchall()]
+            cursor.close()
+            conn.close()
+
+            # Hanya ambil table yang masuk allowed_tables
+            template_tables = [tbl for tbl in template_tables if tbl in allowed_tables]
         
         # Tampilkan halaman upload dengan data tabel template
         return render_template(
@@ -1545,9 +1638,9 @@ def upload_file():
             # Validasi format tanggal periode
             if periode_date:
                 try:
-                    periode_date = datetime.strptime(periode_date, '%Y-%m-%d').date()
+                    periode_date = datetime.strptime(periode_date, '%Y-%m').date().replace(day=1)
                 except ValueError:
-                    return jsonify({'success': False, 'message': 'Format tanggal periode tidak valid. Gunakan format YYYY-MM-DD'})
+                    return jsonify({'success': False, 'message': 'Format tanggal periode tidak valid. Gunakan format YYYY-MM'})
             
             # Buat folder uploads ada
             upload_folder = app.config['UPLOAD_FOLDER']
@@ -2727,14 +2820,22 @@ def check_period():
         return jsonify({'success': False, 'message': 'Nama tabel dan periode_date wajib diisi.'})
 
     try:
+        # 🔹 Ubah dari YYYY-MM menjadi YYYY-MM-01
+        try:
+            periode_date = datetime.strptime(periode_date, '%Y-%m').date().replace(day=1)
+        except ValueError:
+            return jsonify({'success': False, 'message': 'Format tanggal periode tidak valid. Gunakan format YYYY-MM'})
+
         conn = get_db_connection()
         cursor = conn.cursor()
         query = f"SELECT COUNT(*) FROM {table_name} WHERE period_date = ?"
         cursor.execute(query, (periode_date,))
         count = cursor.fetchone()[0]
         return jsonify({'success': True, 'exists': count > 0})
+
     except Exception as e:
         return jsonify({'success': False, 'message': f'Error checking period: {str(e)}'})
+
     finally:
         if cursor: cursor.close()
         if conn: conn.close()

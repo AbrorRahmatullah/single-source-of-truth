@@ -53,7 +53,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="periode_date" class="form-label">Periode Date</label>
-                                <input type="date" id="periode_date" name="periode_date" class="form-control" required>
+                                <input type="month" id="periode_date" name="periode_date" class="form-control" required>
                                 <div class="form-text">Periode Date diambil dari form input, tidak dari file Excel</div>
                             </div>
                         </div>
@@ -320,8 +320,8 @@
             }
             
             // Validate date format
-            if (!validateDate(periodeDate.value)) {
-                showAlert('error', 'Format tanggal periode tidak valid. Gunakan format YYYY-MM-DD');
+            if (!validateMonthYear(periodeDate.value)) {
+                showAlert('error', 'Format periode tidak valid. Gunakan format YYYY-MM');
                 periodeDate.focus();
                 return;
             }
@@ -492,7 +492,7 @@
                 
                 // Show first few errors in summary
                 if (data.validation_errors.length > 0) {
-                    errorSummary += '<h6 style="color: #374151; margin: 16px 0 8px 0;">Sample Errors:</h6>';
+                    errorSummary += '<h6 style="color: #374151; margin: 16px 0 8px 0;">Detail Errors:</h6>';
                     errorSummary += '<ul style="margin: 0; padding-left: 0; list-style: none;">';
                     
                     data.validation_errors.slice(0, displayedErrors).forEach((error, index) => {
@@ -792,15 +792,6 @@
             details += `<tr><th>Primary Header</th><td><strong>${data.header_info.detected_primary}</strong></td></tr>`;
             details += '</table>';
             
-            if (data.columns_used && data.columns_used.length > 0) {
-                details += '<div style="margin-top: 20px;"><h5 style="margin-bottom: 10px; color: #374151;">📋 Kolom yang Digunakan dari Excel:</h5>';
-                details += '<div style="display: flex; flex-wrap: wrap; gap: 8px;">';
-                data.columns_used.forEach(col => {
-                    details += `<span style="background: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 4px; font-size: 0.875rem; font-weight: 500;">${col}</span>`;
-                });
-                details += '</div></div>';
-            }
-            
             // PERBAIKAN: Hanya tampilkan warning untuk header yang SEHARUSNYA ada di Excel
             // Jangan tampilkan warning untuk kolom otomatis (period_date, upload_date)
             if (data.header_info.missing_headers && data.header_info.missing_headers.length > 0) {
@@ -898,9 +889,9 @@
             }, 5000);
         }
 
-        function validateDate(dateString) {
-            const date = new Date(dateString);
-            return date instanceof Date && !isNaN(date) && dateString.match(/^\d{4}-\d{2}-\d{2}$/);
+        function validateMonthYear(dateString) {
+            // Cek format YYYY-MM
+            return /^\d{4}-(0[1-9]|1[0-2])$/.test(dateString);
         }
 
         // Utility functions
@@ -1044,8 +1035,8 @@
             if (periodeInput) {
                 periodeInput.addEventListener('change', function() {
                     const dateValue = this.value;
-                    if (dateValue && !validateDate(dateValue)) {
-                        showAlert('warning', 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD.');
+                    if (dateValue && !validateMonthYear(dateValue)) {
+                        showAlert('warning', 'Format tanggal tidak valid. Gunakan format YYYY-MM.');
                         this.focus();
                     }
                 });
