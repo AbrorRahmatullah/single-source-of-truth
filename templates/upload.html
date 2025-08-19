@@ -255,11 +255,43 @@
                             </li>`;
                     }).join('');
 
-                    // Buat konten lengkap dengan struktur yang sesuai
-                    let details = `
+                    let dataCountsHtml = '';
+                    if (result.data_counts_by_period && result.data_counts_by_period.length > 0) {
+                        let dataCountsList = result.data_counts_by_period.map(item => {
+                        return `
+                            <tr class="data-count-row">
+                                <td class="period-date">${item.period_date}</td>
+                                <td class="record-count">${item.total_records.toLocaleString()} rows</td>
+                            </tr>`;
+                    }).join('');
+
+                    dataCountsHtml = `
                         <div class="info-card">
                             <div class="info-card-title">
-                                Kolom Yang Harus Ada di File Excel (${excelColumns.length} kolom)
+                                <b>Data Existing (${result.data_counts_by_period.length} periode)</b>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-count-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Period Date</th>
+                                            <th>Total Records</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${dataCountsList}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>`;
+                    }
+
+                    // Buat konten lengkap dengan struktur yang sesuai
+                    let details = `
+                        ${dataCountsHtml}
+                        <div class="info-card">
+                            <div class="info-card-title">
+                                <b>Kolom Yang Harus Ada di File Excel (${excelColumns.length} kolom)</b>
                             </div>
                             <ul class="info-list">
                                 ${excelColumnsList}
@@ -269,11 +301,10 @@
                     // Buat message content
                     let messageContent = `
                         <div class="result-text">
-                            Template database berhasil dimuat. Silakan periksa struktur kolom di bawah ini sebelum melakukan upload data.
+                            Template database berhasil dimuat. Silakan periksa struktur dan data pada kolom di bawah ini sebelum melakukan upload data.
                         </div>`;
 
-                    // Panggil showResult dengan parameter yang sesuai
-                    showResult('success', `Header Database - ${tableName}`, messageContent, details);
+                    showResult('success', `${tableName}`, messageContent, details);
 
                 } else {
                     showAlert('error', result.message || 'Gagal memuat header.');

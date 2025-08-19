@@ -1116,6 +1116,59 @@ def get_template_tables(role_access=None, division=None):
             cursor.close()
         if conn:
             conn.close()
+
+def get_data_count_by_period(table_name):
+    """
+    Mendapatkan jumlah data berdasarkan period_date untuk tabel tertentu
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if table exists and has period_date column
+        check_query = """
+        SELECT COUNT(*) 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = ? AND COLUMN_NAME = 'period_date' AND TABLE_SCHEMA = 'dbo'
+        """
+        cursor.execute(check_query, (table_name,))
+        has_period_date = cursor.fetchone()[0] > 0
+        
+        if not has_period_date:
+            return []
+        
+        # Get data count grouped by period_date
+        query = f"""
+        SELECT TOP 5
+            period_date,
+            COUNT(*) as total_records
+        FROM [{table_name}]
+        GROUP BY period_date
+        ORDER BY period_date DESC
+        """
+        
+        cursor.execute(query)
+        results = cursor.fetchall()
+        
+        data_counts = []
+        for row in results:
+            data_counts.append({
+                'period_date': row[0].strftime('%B %Y') if row[0] else 'NULL',
+                'total_records': row[1]
+            })
+        
+        return data_counts
+        
+    except Exception as e:
+        logger.error(f"Error getting data count by period: {str(e)}")
+        return []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
             
 def get_master_divisions_tables():
     conn = None
@@ -1718,13 +1771,16 @@ def preview_headers(table_name):
                 'required_in_excel': col_name in excel_columns
             }
         
+        data_counts = get_data_count_by_period(table_name)
+        
         return jsonify({
             'success': True,
             'headers': headers_with_info,
             'table_name': table_name,
             'total_columns': len(all_columns),
             'excel_required_columns': len(excel_columns),
-            'automatic_columns': len(automatic_columns)
+            'automatic_columns': len(automatic_columns),
+            'data_counts_by_period': data_counts
         })
         
     except Exception as e:
