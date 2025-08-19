@@ -1355,3 +1355,66 @@ body {
 #templateColumnsTable th, #templateColumnsTable td {
     vertical-align: middle;
 }
+
+.data-count-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+    background-color: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    text-align: center;
+}
+
+.data-count-table thead {
+    background-color: #f8f9fa;
+    text-align: center;
+}
+
+.data-count-table th,
+.data-count-table td {
+    padding: 12px 16px;
+    text-align: center;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.data-count-table th {
+    font-weight: 600;
+    color: #374151;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    text-align: center;
+}
+
+.data-count-table tbody tr:hover {
+    background-color: #f9fafb;
+    text-align: center;
+}
+
+.data-count-table .period-date {
+    font-weight: 600;
+    color: #2563eb;
+    text-align: center;
+}
+
+.data-count-table .record-count {
+    color: #2563eb;
+    text-align: center;
+}
+
+.data-count-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.period-date {
+    font-weight: 600;
+    color: #2563eb;
+    text-align: center;
+}
+
+.table-wrapper {
+    overflow-x: auto;
+    margin-top: 12px;
+}
