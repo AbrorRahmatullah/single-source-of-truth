@@ -243,6 +243,28 @@
         });
     }
 
+    function checkPassword(password, passwordConfirm, targetErrorId = 'password_error', targetButtonId = 'createUserBtn') {
+        const errorElement = document.getElementById(targetErrorId);
+        const submitBtn = document.getElementById(targetButtonId);
+
+        // Reset error
+        errorElement.textContent = '';
+
+        if (password !== passwordConfirm) {
+            errorElement.textContent = 'Password dan konfirmasi password tidak sama';
+            errorElement.style.color = 'red';
+            errorElement.style.fontSize = '12px';
+            errorElement.style.marginTop = '5px';
+        } else {
+            errorElement.textContent = '';
+        }
+
+        // Disable tombol jika ada error
+        if (submitBtn) {
+            submitBtn.disabled = !!errorElement.textContent;
+        }
+    }
+
     function updateSubmitButton() {
         const usernameError = document.getElementById('username_error') || document.getElementById('edit_username_error');
         const emailError = document.getElementById('email_error') || document.getElementById('edit_email_error');
@@ -454,6 +476,18 @@
                 const username = this.value.trim();
                 const userId = document.getElementById('edit_user_id').value;
                 checkUsername(username, userId, 'edit_username_error', 'editUserBtn');
+            });
+        }
+
+        // Password validation untuk create user
+        const passwordInput = document.getElementById('password');
+        const passwordConfirmInput = document.getElementById('password_confirm');
+        if (passwordInput && passwordConfirmInput) {
+            passwordInput.addEventListener('input', function() {
+                checkPassword(passwordInput.value, passwordConfirmInput.value, 'password_error', 'createUserBtn');
+            });
+            passwordConfirmInput.addEventListener('input', function() {
+                checkPassword(passwordInput.value, passwordConfirmInput.value, 'password_error', 'createUserBtn');
             });
         }
     });
