@@ -794,20 +794,20 @@
                         'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
                     ];
                     
-                    const dayNames = [
+                    /* const dayNames = [
                         'Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'
-                    ];
+                    ]; */
                     
                     // Parse the date string
                     const date = new Date(dateString);
                     
                     // Get day name, day, month name, and year
-                    const dayName = dayNames[date.getDay()];
-                    const day = String(date.getDate()).padStart(2, '0');
+                    /* const dayName = dayNames[date.getDay()];
+                    const day = String(date.getDate()).padStart(2, '0'); */
                     const monthName = monthNames[date.getMonth()];
                     const year = date.getFullYear();
                     
-                    return `${dayName}, ${day} ${monthName} ${year}`;
+                    return `${monthName} ${year}`;
                 }
                 
                 const formattedDate = formatToIndonesianDate(data.periode_date);
