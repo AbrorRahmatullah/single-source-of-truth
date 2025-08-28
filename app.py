@@ -1,6 +1,7 @@
 import csv
 from decimal import Decimal, InvalidOperation
 import io
+import math
 import pandas as pd
 import pyodbc
 import os
@@ -48,17 +49,70 @@ def check_idle_timeout():
     # Update waktu terakhir aktivitas
     session["last_activity"] = datetime.now().isoformat()
 
-def render_alert(message, redirect_url, username, fullname, email, role_access=None, division=None):
-    return '''
-    <script>
-        alert("{}");
-        window.location.href = "{}";
-    </script>
-    '''.format(message, url_for(redirect_url))
-
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ['xlsx', 'xls']
+
+def normalize_column_name(col_name):
+    """Normalize column name for comparison"""
+    if pd.isna(col_name):
+        return ""
+    return str(col_name).strip()
+
+def find_matching_column(excel_header, db_columns, strict_mode=False):
+    """
+    Find matching database column for Excel header with fallback strategies
+    
+    Args:
+        excel_header: Header from Excel file
+        db_columns: List of database column names
+        strict_mode: If True, only exact matches allowed
+    
+    Returns:
+        matched_db_column or None
+    """
+    if not excel_header or pd.isna(excel_header):
+        return None
+    
+    excel_norm = normalize_column_name(excel_header)
+    if not excel_norm:
+        return None
+    
+    # Strategy 1: Exact match (normalized)
+    for db_col in db_columns:
+        db_norm = normalize_column_name(db_col)
+        if excel_norm == db_norm:
+            return db_col
+    
+    if strict_mode:
+        return None
+    
+    # Strategy 2: Space to underscore conversion
+    excel_underscore = excel_norm.replace(' ', '_')
+    for db_col in db_columns:
+        db_norm = normalize_column_name(db_col)
+        db_underscore = db_norm.replace(' ', '_')
+        if excel_underscore == db_underscore:
+            return db_col
+    
+    # Strategy 3: Remove all separators (spaces, underscores, hyphens)
+    excel_clean = re.sub(r'[\s_-]+', '', excel_norm)
+    if len(excel_clean) >= 3:  # Only for meaningful length
+        for db_col in db_columns:
+            db_norm = normalize_column_name(db_col)
+            db_clean = re.sub(r'[\s_-]+', '', db_norm)
+            if excel_clean == db_clean:
+                return db_col
+    
+    # Strategy 4: Substring matching (minimum 4 characters)
+    if len(excel_norm) >= 4:
+        for db_col in db_columns:
+            db_norm = normalize_column_name(db_col)
+            if len(db_norm) >= 4:
+                if excel_norm in db_norm or db_norm in excel_norm:
+                    return db_col
+    
+    return None
 
 def find_primary_header_row(df, primary_header_pattern=None):
     def normalize_text(text):
@@ -181,185 +235,390 @@ def find_primary_header_row(df, primary_header_pattern=None):
 
     raise ValueError("Tidak dapat menemukan baris header. Pastikan file Excel memiliki baris header yang jelas.")
 
+# def find_header_row_and_validate(df, required_headers, primary_header_pattern=None):
+#     """
+#     Mencari baris header dan memvalidasi keberadaan semua header yang diperlukan.
+#     Sekarang mendukung mapping kolom berdasarkan posisi dan jumlah kolom.
+#     """
+#     def normalize_header(header):
+#         """Normalisasi header untuk perbandingan"""
+#         if pd.isna(header):
+#             return ""
+#         normalized = re.sub(r'[^\w\s]', '', str(header))
+#         normalized = re.sub(r'\s+', ' ', normalized).lower().strip()
+#         return normalized
+
+#     def is_header_match_by_position(excel_col_index, db_col_index, total_excel_cols, total_db_cols):
+#         """
+#         Cek apakah dua header cocok berdasarkan posisi kolom
+        
+#         Args:
+#             excel_col_index: Indeks kolom di Excel (0-based)
+#             db_col_index: Indeks kolom di database schema (0-based)
+#             total_excel_cols: Total jumlah kolom aktif di Excel
+#             total_db_cols: Total jumlah kolom yang dibutuhkan dari database
+        
+#         Returns:
+#             bool: True jika posisi cocok
+#         """
+#         # Jika jumlah kolom sama, mapping langsung berdasarkan posisi
+#         if total_excel_cols == total_db_cols:
+#             return excel_col_index == db_col_index
+        
+#         # Jika Excel memiliki lebih banyak kolom, mapping proporsi
+#         elif total_excel_cols > total_db_cols:
+#             # Hitung posisi relatif dalam database
+#             relative_position = db_col_index / (total_db_cols - 1) if total_db_cols > 1 else 0
+#             expected_excel_index = round(relative_position * (total_excel_cols - 1)) if total_excel_cols > 1 else 0
+            
+#             # Toleransi ±1 untuk mapping yang lebih fleksibel
+#             return abs(excel_col_index - expected_excel_index) <= 1
+        
+#         # Jika database memiliki lebih banyak kolom
+#         else:
+#             # Hitung posisi relatif dalam Excel
+#             relative_position = excel_col_index / (total_excel_cols - 1) if total_excel_cols > 1 else 0
+#             expected_db_index = round(relative_position * (total_db_cols - 1)) if total_db_cols > 1 else 0
+            
+#             # Toleransi ±1 untuk mapping yang lebih fleksibel
+#             return abs(db_col_index - expected_db_index) <= 1
+
+#     def is_header_match_hybrid(excel_header, db_header, excel_col_index, db_col_index, 
+#                               total_excel_cols, total_db_cols, use_position_only=False):
+#         """
+#         Cek header dengan pendekatan hybrid: posisi + nama (opsional)
+#         """
+#         # Mode posisi saja
+#         if use_position_only:
+#             return is_header_match_by_position(excel_col_index, db_col_index, 
+#                                              total_excel_cols, total_db_cols)
+        
+#         # Mode hybrid: cek posisi terlebih dahulu
+#         position_match = is_header_match_by_position(excel_col_index, db_col_index, 
+#                                                    total_excel_cols, total_db_cols)
+        
+#         # Jika posisi tidak cocok, skip
+#         if not position_match:
+#             return False
+        
+#         # Jika posisi cocok, validasi dengan nama (opsional untuk konfirmasi)
+#         if pd.isna(excel_header) or pd.isna(db_header):
+#             return True  # Terima jika posisi cocok meskipun nama kosong
+        
+#         excel_norm = normalize_header(excel_header)
+#         db_norm = normalize_header(db_header)
+        
+#         # Jika salah satu kosong, terima berdasarkan posisi
+#         if not excel_norm or not db_norm:
+#             return True
+        
+#         # Cek kesamaan nama sebagai konfirmasi tambahan
+#         # Prioritaskan exact match
+#         if excel_norm == db_norm:
+#             return True
+#         # Spasi ke underscore
+#         if excel_norm.replace(' ', '_') == db_norm.replace(' ', '_'):
+#             return True
+#         # Hapus separator
+#         if re.sub(r'[\s_-]+', '', excel_norm) == re.sub(r'[\s_-]+', '', db_norm):
+#             return True
+#         # Substring match minimal 4 karakter
+#         if len(excel_norm) >= 4 and (excel_norm in db_norm or db_norm in excel_norm):
+#             return True
+        
+#         # Jika nama tidak cocok tapi posisi cocok, masih terima dengan peringatan
+#         logger.warning(f"Posisi cocok tapi nama berbeda: '{excel_header}' vs '{db_header}'")
+#         return True
+
+#     # Cari baris header
+#     header_row, detected_primary = find_primary_header_row(df, primary_header_pattern)
+
+#     # Deteksi kolom pertama yang tidak kosong
+#     first_nonempty_col_index = next(
+#         (idx for idx, val in enumerate(df.iloc[header_row]) if pd.notna(val) and str(val).strip()), 0
+#     )
+
+#     # Ambil header dari kolom aktif ke kanan
+#     excel_headers = [
+#         str(val).strip() if pd.notna(val) else ""
+#         for val in df.iloc[header_row][first_nonempty_col_index:]
+#     ]
+
+#     # Hitung total kolom aktif
+#     total_excel_cols = len([h for h in excel_headers if h.strip()])
+#     total_db_cols = len(required_headers)
+
+#     logger.info(f"Total kolom Excel aktif: {total_excel_cols}")
+#     logger.info(f"Total kolom database required: {total_db_cols}")
+
+#     # Validasi dan mapping berdasarkan posisi
+#     valid_headers_mapping = []
+#     missing_headers = []
+#     found_headers = []
+#     match_details = []
+
+#     # Parameter untuk mengatur mode matching
+#     use_position_only = True  # Set True untuk matching berdasarkan posisi saja
+    
+#     for db_col_index, db_header in enumerate(required_headers):
+#         matching_excel_header = None
+#         match_type = ""
+        
+#         # Cari berdasarkan posisi
+#         for excel_col_index, excel_header in enumerate(excel_headers):
+#             if not excel_header.strip():  # Skip kolom kosong
+#                 continue
+                
+#             if is_header_match_hybrid(excel_header, db_header, excel_col_index, db_col_index,
+#                                     total_excel_cols, total_db_cols, use_position_only):
+#                 matching_excel_header = excel_header
+                
+#                 # Tentukan tipe match
+#                 if use_position_only:
+#                     match_type = "position_based"
+#                 else:
+#                     # Logika untuk menentukan tipe match nama
+#                     if pd.notna(excel_header) and pd.notna(db_header):
+#                         excel_norm = normalize_header(excel_header)
+#                         db_norm = normalize_header(db_header)
+#                         if excel_norm == db_norm:
+#                             match_type = "position_and_exact_name"
+#                         elif excel_norm.replace(' ', '_') == db_norm.replace(' ', '_'):
+#                             match_type = "position_and_separator_normalized"
+#                         else:
+#                             match_type = "position_and_partial_name"
+#                     else:
+#                         match_type = "position_only"
+#                 break
+
+#         if matching_excel_header:
+#             valid_headers_mapping.append((matching_excel_header, db_header))
+#             found_headers.append(db_header)
+#             match_details.append(f"Kolom {db_col_index + 1}: '{matching_excel_header}' -> '{db_header}' ({match_type})")
+#         else:
+#             missing_headers.append(db_header)
+
+#     logger.info(f"Header row ditemukan di baris: {header_row + 1}")
+#     logger.info(f"Primary header detected: '{detected_primary}'")
+#     logger.info(f"Header yang ditemukan: {found_headers}")
+
+#     if match_details:
+#         logger.info("Detail pencocokan header berdasarkan posisi:")
+#         for detail in match_details:
+#             logger.info(f"  {detail}")
+
+#     if missing_headers:
+#         logger.warning(f"Header yang tidak ditemukan: {missing_headers}")
+
+#     if not valid_headers_mapping:
+#         raise ValueError("Tidak ada header yang cocok antara Excel dan database")
+
+#     return header_row, valid_headers_mapping, missing_headers, detected_primary
+
 def find_header_row_and_validate(df, required_headers, primary_header_pattern=None):
     """
-    Mencari baris header dan memvalidasi keberadaan semua header yang diperlukan.
-    Sekarang mendukung mapping kolom berdasarkan posisi dan jumlah kolom.
+    Enhanced header finding with strict column validation
     """
-    def normalize_header(header):
-        """Normalisasi header untuk perbandingan"""
-        if pd.isna(header):
-            return ""
-        normalized = re.sub(r'[^\w\s]', '', str(header))
-        normalized = re.sub(r'\s+', ' ', normalized).lower().strip()
-        return normalized
-
-    def is_header_match_by_position(excel_col_index, db_col_index, total_excel_cols, total_db_cols):
-        """
-        Cek apakah dua header cocok berdasarkan posisi kolom
-        
-        Args:
-            excel_col_index: Indeks kolom di Excel (0-based)
-            db_col_index: Indeks kolom di database schema (0-based)
-            total_excel_cols: Total jumlah kolom aktif di Excel
-            total_db_cols: Total jumlah kolom yang dibutuhkan dari database
-        
-        Returns:
-            bool: True jika posisi cocok
-        """
-        # Jika jumlah kolom sama, mapping langsung berdasarkan posisi
-        if total_excel_cols == total_db_cols:
-            return excel_col_index == db_col_index
-        
-        # Jika Excel memiliki lebih banyak kolom, mapping proporsi
-        elif total_excel_cols > total_db_cols:
-            # Hitung posisi relatif dalam database
-            relative_position = db_col_index / (total_db_cols - 1) if total_db_cols > 1 else 0
-            expected_excel_index = round(relative_position * (total_excel_cols - 1)) if total_excel_cols > 1 else 0
-            
-            # Toleransi ±1 untuk mapping yang lebih fleksibel
-            return abs(excel_col_index - expected_excel_index) <= 1
-        
-        # Jika database memiliki lebih banyak kolom
-        else:
-            # Hitung posisi relatif dalam Excel
-            relative_position = excel_col_index / (total_excel_cols - 1) if total_excel_cols > 1 else 0
-            expected_db_index = round(relative_position * (total_db_cols - 1)) if total_db_cols > 1 else 0
-            
-            # Toleransi ±1 untuk mapping yang lebih fleksibel
-            return abs(db_col_index - expected_db_index) <= 1
-
-    def is_header_match_hybrid(excel_header, db_header, excel_col_index, db_col_index, 
-                              total_excel_cols, total_db_cols, use_position_only=False):
-        """
-        Cek header dengan pendekatan hybrid: posisi + nama (opsional)
-        """
-        # Mode posisi saja
-        if use_position_only:
-            return is_header_match_by_position(excel_col_index, db_col_index, 
-                                             total_excel_cols, total_db_cols)
-        
-        # Mode hybrid: cek posisi terlebih dahulu
-        position_match = is_header_match_by_position(excel_col_index, db_col_index, 
-                                                   total_excel_cols, total_db_cols)
-        
-        # Jika posisi tidak cocok, skip
-        if not position_match:
+    def is_likely_header_row(row_data, required_headers):
+        """Check if a row looks like a header row"""
+        non_empty_count = sum(1 for val in row_data if pd.notna(val) and str(val).strip())
+        if non_empty_count < len(required_headers) * 0.5:  # At least 50% filled
             return False
         
-        # Jika posisi cocok, validasi dengan nama (opsional untuk konfirmasi)
-        if pd.isna(excel_header) or pd.isna(db_header):
-            return True  # Terima jika posisi cocok meskipun nama kosong
+        # Check for numeric-only rows (likely data, not headers)
+        text_count = 0
+        for val in row_data:
+            if pd.notna(val):
+                val_str = str(val).strip()
+                if val_str and not val_str.replace('.', '').replace('-', '').isdigit():
+                    text_count += 1
         
-        excel_norm = normalize_header(excel_header)
-        db_norm = normalize_header(db_header)
+        return text_count >= non_empty_count * 0.7  # At least 70% non-numeric
+
+    def normalize_column_name(col_name):
+        """Normalize column name for comparison"""
+        if pd.isna(col_name):
+            return ""
+        return str(col_name).strip()
+
+    def convert_spaces_to_underscore(col_name):
+        """Convert spaces to underscores in column name"""
+        if pd.isna(col_name):
+            return ""
+        return str(col_name).strip().replace(' ', '_')
+
+    def strict_column_match(excel_headers, required_headers):
+        """Strict column matching with enhanced validation"""
+        # Remove empty headers
+        non_empty_excel_headers = [h for h in excel_headers if h.strip()]
         
-        # Jika salah satu kosong, terima berdasarkan posisi
-        if not excel_norm or not db_norm:
-            return True
+        # Validation 1: Check column count
+        if len(non_empty_excel_headers) != len(required_headers):
+            raise ValueError(
+                f"File Excel memiliki {len(non_empty_excel_headers)} kolom, "
+                f"tetapi tabel database membutuhkan {len(required_headers)} kolom. "
+                f"Excel: {non_empty_excel_headers}, Database: {required_headers}"
+            )
         
-        # Cek kesamaan nama sebagai konfirmasi tambahan
-        # Prioritaskan exact match
-        if excel_norm == db_norm:
-            return True
-        # Spasi ke underscore
-        if excel_norm.replace(' ', '_') == db_norm.replace(' ', '_'):
-            return True
-        # Hapus separator
-        if re.sub(r'[\s_-]+', '', excel_norm) == re.sub(r'[\s_-]+', '', db_norm):
-            return True
-        # Substring match minimal 4 karakter
-        if len(excel_norm) >= 4 and (excel_norm in db_norm or db_norm in excel_norm):
-            return True
+        # Validation 2: Exact name matching (case-insensitive)
+        valid_headers_mapping = []
+        found_db_columns = set()
         
-        # Jika nama tidak cocok tapi posisi cocok, masih terima dengan peringatan
-        logger.warning(f"Posisi cocok tapi nama berbeda: '{excel_header}' vs '{db_header}'")
-        return True
-
-    # Cari baris header
-    header_row, detected_primary = find_primary_header_row(df, primary_header_pattern)
-
-    # Deteksi kolom pertama yang tidak kosong
-    first_nonempty_col_index = next(
-        (idx for idx, val in enumerate(df.iloc[header_row]) if pd.notna(val) and str(val).strip()), 0
-    )
-
-    # Ambil header dari kolom aktif ke kanan
-    excel_headers = [
-        str(val).strip() if pd.notna(val) else ""
-        for val in df.iloc[header_row][first_nonempty_col_index:]
-    ]
-
-    # Hitung total kolom aktif
-    total_excel_cols = len([h for h in excel_headers if h.strip()])
-    total_db_cols = len(required_headers)
-
-    logger.info(f"Total kolom Excel aktif: {total_excel_cols}")
-    logger.info(f"Total kolom database required: {total_db_cols}")
-
-    # Validasi dan mapping berdasarkan posisi
-    valid_headers_mapping = []
-    missing_headers = []
-    found_headers = []
-    match_details = []
-
-    # Parameter untuk mengatur mode matching
-    use_position_only = True  # Set True untuk matching berdasarkan posisi saja
-    
-    for db_col_index, db_header in enumerate(required_headers):
-        matching_excel_header = None
-        match_type = ""
+        # First attempt: exact matching
+        for i, excel_header in enumerate(non_empty_excel_headers):
+            normalized_excel = normalize_column_name(excel_header).lower()
+            matched_db_col = None
+            
+            # Find exact match (case-insensitive)
+            for db_col in required_headers:
+                if db_col not in found_db_columns and db_col.lower() == normalized_excel:
+                    matched_db_col = db_col
+                    break
+            
+            if matched_db_col:
+                valid_headers_mapping.append((excel_header, matched_db_col))
+                found_db_columns.add(matched_db_col)
+            else:
+                # Column name doesn't match exactly, will try space conversion later
+                valid_headers_mapping.append((excel_header, None))
         
-        # Cari berdasarkan posisi
-        for excel_col_index, excel_header in enumerate(excel_headers):
-            if not excel_header.strip():  # Skip kolom kosong
-                continue
-                
-            if is_header_match_hybrid(excel_header, db_header, excel_col_index, db_col_index,
-                                    total_excel_cols, total_db_cols, use_position_only):
-                matching_excel_header = excel_header
-                
-                # Tentukan tipe match
-                if use_position_only:
-                    match_type = "position_based"
-                else:
-                    # Logika untuk menentukan tipe match nama
-                    if pd.notna(excel_header) and pd.notna(db_header):
-                        excel_norm = normalize_header(excel_header)
-                        db_norm = normalize_header(db_header)
-                        if excel_norm == db_norm:
-                            match_type = "position_and_exact_name"
-                        elif excel_norm.replace(' ', '_') == db_norm.replace(' ', '_'):
-                            match_type = "position_and_separator_normalized"
-                        else:
-                            match_type = "position_and_partial_name"
+        # Check if all columns matched exactly
+        unmatched_excel_headers = [mapping[0] for mapping in valid_headers_mapping if mapping[1] is None]
+        unmatched_db_headers = [col for col in required_headers if col not in found_db_columns]
+        
+        if unmatched_excel_headers:
+            logger.info(f"Some columns didn't match exactly. Attempting space-to-underscore conversion...")
+            
+            # Validation 3: Try converting spaces to underscores
+            space_converted_mapping = []
+            remaining_found_columns = found_db_columns.copy()
+            remaining_db_columns = [col for col in required_headers if col not in found_db_columns]
+            
+            for excel_header, db_match in valid_headers_mapping:
+                if db_match is None:  # This column didn't match
+                    # Try converting spaces to underscores
+                    converted_header = convert_spaces_to_underscore(excel_header).lower()
+                    matched_db_col = None
+                    
+                    # Find match with converted name
+                    for db_col in remaining_db_columns:
+                        if db_col.lower() == converted_header:
+                            matched_db_col = db_col
+                            break
+                    
+                    if matched_db_col:
+                        space_converted_mapping.append((excel_header, matched_db_col))
+                        remaining_found_columns.add(matched_db_col)
+                        remaining_db_columns.remove(matched_db_col)
+                        logger.info(f"Successfully converted '{excel_header}' -> '{matched_db_col}' (space to underscore)")
                     else:
-                        match_type = "position_only"
+                        space_converted_mapping.append((excel_header, None))
+                else:
+                    space_converted_mapping.append((excel_header, db_match))
+            
+            # Update the mapping
+            valid_headers_mapping = space_converted_mapping
+            found_db_columns = remaining_found_columns
+        
+        # Final validation: Check if all columns are matched
+        final_unmatched_excel = [mapping[0] for mapping in valid_headers_mapping if mapping[1] is None]
+        final_unmatched_db = [col for col in required_headers if col not in found_db_columns]
+        
+        if final_unmatched_excel or final_unmatched_db:
+            error_msg = "Nama kolom tidak sesuai dengan template database.\n\n"
+            
+            # if final_unmatched_excel:
+            #     error_msg += f"Kolom di Excel yang tidak dikenali: {final_unmatched_excel}\n"
+            
+            # if final_unmatched_db:
+            #     error_msg += f"Kolom database yang tidak ditemukan: {final_unmatched_db}\n"
+            
+            # error_msg += f"\nKolom yang dibutuhkan database: {required_headers}\n"
+            # error_msg += f"Kolom yang ditemukan di Excel: {[h for h in excel_headers if h.strip()]}\n\n"
+            error_msg += "Pastikan nama kolom di Excel sesuai dengan template database (case-insensitive). "
+            error_msg += "Spasi dalam nama kolom akan otomatis dikonversi ke underscore."
+            
+            raise ValueError(error_msg)
+        
+        return valid_headers_mapping, [], []  # No missing headers in strict mode
+    
+    # Find header row
+    header_row = None
+    detected_primary = None
+    
+    # If primary_header_pattern provided, search for it first
+    if primary_header_pattern:
+        for idx in range(min(20, len(df))):  # Search first 20 rows
+            row_data = df.iloc[idx].tolist()
+            for val in row_data:
+                if pd.notna(val):
+                    val_str = str(val).strip().lower()
+                    if primary_header_pattern.lower() in val_str:
+                        if is_likely_header_row(row_data, required_headers):
+                            header_row = idx
+                            detected_primary = str(val).strip()
+                            break
+            if header_row is not None:
                 break
-
-        if matching_excel_header:
-            valid_headers_mapping.append((matching_excel_header, db_header))
-            found_headers.append(db_header)
-            match_details.append(f"Kolom {db_col_index + 1}: '{matching_excel_header}' -> '{db_header}' ({match_type})")
-        else:
-            missing_headers.append(db_header)
-
-    logger.info(f"Header row ditemukan di baris: {header_row + 1}")
-    logger.info(f"Primary header detected: '{detected_primary}'")
-    logger.info(f"Header yang ditemukan: {found_headers}")
-
-    if match_details:
-        logger.info("Detail pencocokan header berdasarkan posisi:")
-        for detail in match_details:
-            logger.info(f"  {detail}")
-
-    if missing_headers:
-        logger.warning(f"Header yang tidak ditemukan: {missing_headers}")
-
-    if not valid_headers_mapping:
-        raise ValueError("Tidak ada header yang cocok antara Excel dan database")
-
-    return header_row, valid_headers_mapping, missing_headers, detected_primary
+    
+    # If not found by primary pattern, search for row with most text columns
+    if header_row is None:
+        best_row = None
+        best_score = 0
+        
+        for idx in range(min(20, len(df))):
+            row_data = df.iloc[idx].tolist()
+            if is_likely_header_row(row_data, required_headers):
+                # Score based on non-empty cells and text content
+                non_empty = sum(1 for val in row_data if pd.notna(val) and str(val).strip())
+                text_cells = sum(1 for val in row_data 
+                               if pd.notna(val) and str(val).strip() and 
+                               not str(val).strip().replace('.', '').replace('-', '').isdigit())
+                
+                score = text_cells * 2 + non_empty  # Prefer text over numbers
+                
+                if score > best_score:
+                    best_score = score
+                    best_row = idx
+                    # Use first non-empty cell as detected primary
+                    for val in row_data:
+                        if pd.notna(val) and str(val).strip():
+                            detected_primary = str(val).strip()
+                            break
+        
+        header_row = best_row
+    
+    if header_row is None:
+        raise ValueError("Tidak dapat menemukan baris header yang valid dalam 20 baris pertama file Excel")
+    
+    # Extract headers from the found row
+    excel_headers = [normalize_column_name(val) for val in df.iloc[header_row]]
+    
+    # Remove empty headers from the end
+    while excel_headers and not excel_headers[-1]:
+        excel_headers.pop()
+    
+    # Perform strict column matching with enhanced validation
+    try:
+        valid_headers_mapping, missing_headers, match_details = strict_column_match(excel_headers, required_headers)
+        
+        logger.info(f"Header row found at: {header_row + 1}")
+        logger.info(f"Primary header detected: '{detected_primary}'")
+        logger.info(f"Strict validation passed: {len(valid_headers_mapping)}/{len(required_headers)} columns matched")
+        
+        # Log successful matches
+        for excel_header, db_header in valid_headers_mapping:
+            if excel_header != db_header:
+                logger.info(f"  Mapped: '{excel_header}' -> '{db_header}'")
+            else:
+                logger.info(f"  Exact match: '{excel_header}'")
+        
+        return header_row, valid_headers_mapping, missing_headers, detected_primary
+        
+    except ValueError as e:
+        # Re-raise with additional context
+        logger.error(f"Column validation failed: {str(e)}")
+        raise ValueError(str(e))
 
 def find_data_start_row(df, header_row, detected_primary_header):
     """
@@ -498,17 +757,105 @@ def get_automatic_columns():
     """
     return ['id', 'period_date', 'upload_date']
 
+# def validate_and_convert_value(value, column_info, column_name):
+#     """
+#     Validate and convert value based on column type and constraints
+#     Returns: (converted_value, is_valid, error_message)
+#     PERBAIKAN: Handle database default marker
+#     """
+#     try:
+#         # Handle NULL values first
+#         processed_value = handle_null_values_for_column(value, {**column_info, 'name': column_name})
+        
+#         # PERBAIKAN: Skip validasi untuk database default marker
+#         if processed_value == '__USE_DATABASE_DEFAULT__':
+#             return processed_value, True, ""
+        
+#         # If processed value is None (valid NULL), return it
+#         if processed_value is None:
+#             return None, True, ""
+        
+#         # Get column type for conversion
+#         col_type = column_info.get('data_type', '').upper()
+        
+#         # Convert based on data type
+#         if col_type in ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR', 'TEXT']:
+#             str_value = str(processed_value).strip()
+#             max_length = column_info.get('max_length')
+            
+#             if max_length and len(str_value) > max_length:
+#                 return None, False, f"String length ({len(str_value)}) exceeds maximum length ({max_length})"
+            
+#             return str_value, True, ""
+            
+#         elif col_type == 'BIT':
+#             if isinstance(processed_value, bool):
+#                 return processed_value, True, ""
+            
+#             str_val = str(processed_value).lower().strip()
+#             if str_val in ['1', 'true', 'yes', 'y']:
+#                 return True, True, ""
+#             elif str_val in ['0', 'false', 'no', 'n']:
+#                 return False, True, ""
+#             else:
+#                 return None, False, f"Invalid boolean value: '{processed_value}'. Expected: 1/0, true/false, yes/no"
+                
+#         elif col_type in ['INT', 'BIGINT', 'SMALLINT', 'TINYINT']:
+#             try:
+#                 # Handle string numbers
+#                 if isinstance(processed_value, str):
+#                     processed_value = processed_value.replace(',', '')  # Remove thousand separators
+                
+#                 int_value = int(float(processed_value))
+#                 return int_value, True, ""
+#             except (ValueError, TypeError):
+#                 return None, False, f"Invalid integer value: '{processed_value}'"
+                
+#         elif col_type in ['DECIMAL', 'NUMERIC', 'FLOAT', 'REAL']:
+#             try:
+#                 if isinstance(processed_value, str):
+#                     processed_value = processed_value.replace(',', '')  # Remove thousand separators
+                
+#                 float_value = float(processed_value)
+#                 return float_value, True, ""
+#             except (ValueError, TypeError):
+#                 return None, False, f"Invalid numeric value: '{processed_value}'"
+                
+#         elif col_type in ['DATE', 'DATETIME', 'DATETIME2']:
+#             if isinstance(processed_value, (datetime, date)):
+#                 return processed_value, True, ""
+            
+#             # Try to parse string dates
+#             date_formats = [
+#                 '%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d/%m/%Y',
+#                 '%Y/%m/%d', '%d-%m-%Y', '%m-%d-%Y', '%Y%m%d'
+#             ]
+            
+#             for fmt in date_formats:
+#                 try:
+#                     parsed_date = datetime.strptime(str(processed_value), fmt)
+#                     return parsed_date.date() if col_type == 'DATE' else parsed_date, True, ""
+#                 except ValueError:
+#                     continue
+            
+#             return None, False, f"Invalid date format: '{processed_value}'. Expected formats: YYYY-MM-DD, MM/DD/YYYY, etc."
+            
+#         else:
+#             # For unknown types, return as string
+#             return str(processed_value), True, ""
+            
+#     except Exception as e:
+#         return None, False, f"Validation error: {str(e)}"
+
 def validate_and_convert_value(value, column_info, column_name):
     """
-    Validate and convert value based on column type and constraints
-    Returns: (converted_value, is_valid, error_message)
-    PERBAIKAN: Handle database default marker
+    Improved validation with better error handling and type conversion
     """
     try:
         # Handle NULL values first
         processed_value = handle_null_values_for_column(value, {**column_info, 'name': column_name})
         
-        # PERBAIKAN: Skip validasi untuk database default marker
+        # Skip validation for database default marker
         if processed_value == '__USE_DATABASE_DEFAULT__':
             return processed_value, True, ""
         
@@ -519,71 +866,88 @@ def validate_and_convert_value(value, column_info, column_name):
         # Get column type for conversion
         col_type = column_info.get('data_type', '').upper()
         
-        # Convert based on data type
-        if col_type in ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR', 'TEXT']:
-            str_value = str(processed_value).strip()
-            max_length = column_info.get('max_length')
-            
-            if max_length and len(str_value) > max_length:
-                return None, False, f"String length ({len(str_value)}) exceeds maximum length ({max_length})"
-            
-            return str_value, True, ""
-            
-        elif col_type == 'BIT':
-            if isinstance(processed_value, bool):
-                return processed_value, True, ""
-            
-            str_val = str(processed_value).lower().strip()
-            if str_val in ['1', 'true', 'yes', 'y']:
-                return True, True, ""
-            elif str_val in ['0', 'false', 'no', 'n']:
-                return False, True, ""
-            else:
-                return None, False, f"Invalid boolean value: '{processed_value}'. Expected: 1/0, true/false, yes/no"
+        # Convert based on data type with improved error handling
+        try:
+            if col_type in ['VARCHAR', 'NVARCHAR', 'CHAR', 'NCHAR', 'TEXT']:
+                str_value = str(processed_value).strip()
+                max_length = column_info.get('max_length')
                 
-        elif col_type in ['INT', 'BIGINT', 'SMALLINT', 'TINYINT']:
-            try:
-                # Handle string numbers
+                if max_length and len(str_value) > max_length:
+                    return None, False, f"String length ({len(str_value)}) exceeds maximum length ({max_length})"
+                
+                return str_value, True, ""
+                
+            elif col_type == 'BIT':
+                if isinstance(processed_value, bool):
+                    return processed_value, True, ""
+                
+                str_val = str(processed_value).lower().strip()
+                if str_val in ['1', 'true', 'yes', 'y', 'on']:
+                    return True, True, ""
+                elif str_val in ['0', 'false', 'no', 'n', 'off']:
+                    return False, True, ""
+                else:
+                    return None, False, f"Invalid boolean value: '{processed_value}'. Expected: 1/0, true/false, yes/no"
+                    
+            elif col_type in ['INT', 'BIGINT', 'SMALLINT', 'TINYINT']:
+                # Handle string numbers with better parsing
                 if isinstance(processed_value, str):
-                    processed_value = processed_value.replace(',', '')  # Remove thousand separators
+                    # Remove common thousand separators and currency symbols
+                    cleaned = re.sub(r'[,$\s]', '', processed_value.strip())
+                    processed_value = cleaned
                 
-                int_value = int(float(processed_value))
-                return int_value, True, ""
-            except (ValueError, TypeError):
-                return None, False, f"Invalid integer value: '{processed_value}'"
-                
-        elif col_type in ['DECIMAL', 'NUMERIC', 'FLOAT', 'REAL']:
-            try:
-                if isinstance(processed_value, str):
-                    processed_value = processed_value.replace(',', '')  # Remove thousand separators
-                
-                float_value = float(processed_value)
-                return float_value, True, ""
-            except (ValueError, TypeError):
-                return None, False, f"Invalid numeric value: '{processed_value}'"
-                
-        elif col_type in ['DATE', 'DATETIME', 'DATETIME2']:
-            if isinstance(processed_value, (datetime, date)):
-                return processed_value, True, ""
-            
-            # Try to parse string dates
-            date_formats = [
-                '%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d/%m/%Y',
-                '%Y/%m/%d', '%d-%m-%Y', '%m-%d-%Y', '%Y%m%d'
-            ]
-            
-            for fmt in date_formats:
                 try:
-                    parsed_date = datetime.strptime(str(processed_value), fmt)
-                    return parsed_date.date() if col_type == 'DATE' else parsed_date, True, ""
-                except ValueError:
-                    continue
-            
-            return None, False, f"Invalid date format: '{processed_value}'. Expected formats: YYYY-MM-DD, MM/DD/YYYY, etc."
-            
-        else:
-            # For unknown types, return as string
-            return str(processed_value), True, ""
+                    int_value = int(float(processed_value))
+                    return int_value, True, ""
+                except (ValueError, TypeError, OverflowError):
+                    return None, False, f"Invalid integer value: '{processed_value}'"
+                    
+            elif col_type in ['DECIMAL', 'NUMERIC', 'FLOAT', 'REAL', 'MONEY']:
+                if isinstance(processed_value, str):
+                    # Remove common thousand separators and currency symbols
+                    cleaned = re.sub(r'[,$\s]', '', processed_value.strip())
+                    processed_value = cleaned
+                
+                try:
+                    float_value = float(processed_value)
+                    # Check for infinity and NaN
+                    if not math.isfinite(float_value):
+                        return None, False, f"Invalid numeric value (infinity/NaN): '{processed_value}'"
+                    return float_value, True, ""
+                except (ValueError, TypeError):
+                    return None, False, f"Invalid numeric value: '{processed_value}'"
+                    
+            elif col_type in ['DATE', 'DATETIME', 'DATETIME2', 'SMALLDATETIME']:
+                if isinstance(processed_value, (datetime, date)):
+                    return processed_value, True, ""
+                
+                # Try to parse string dates with more formats
+                date_formats = [
+                    '%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f',
+                    '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d', 
+                    '%d-%m-%Y', '%m-%d-%Y', '%Y%m%d',
+                    '%d.%m.%Y', '%m.%d.%Y',
+                    '%Y-%m-%d %H:%M', '%d/%m/%Y %H:%M:%S',
+                    '%m/%d/%Y %H:%M:%S', '%Y/%m/%d %H:%M:%S'
+                ]
+                
+                processed_str = str(processed_value).strip()
+                for fmt in date_formats:
+                    try:
+                        parsed_date = datetime.strptime(processed_str, fmt)
+                        return parsed_date.date() if col_type == 'DATE' else parsed_date, True, ""
+                    except ValueError:
+                        continue
+                
+                return None, False, f"Invalid date format: '{processed_value}'. Expected formats: YYYY-MM-DD, MM/DD/YYYY, etc."
+                
+            else:
+                # For unknown types, return as string with validation
+                str_value = str(processed_value).strip()
+                return str_value, True, ""
+                
+        except Exception as convert_error:
+            return None, False, f"Type conversion error: {str(convert_error)}"
             
     except Exception as e:
         return None, False, f"Validation error: {str(e)}"
@@ -714,15 +1078,131 @@ def process_uploaded_data(df, table_name):
         if conn:
             conn.close()
 
+# def process_excel_file(file_path, table_name, primary_header=None, sheet_name=None, periode_date=None):
+#     """
+#     Memproses file Excel, validasi, normalisasi null, dan insert ke database
+#     """
+#     try:
+#         if not sheet_name:
+#             return {'success': False, 'message': 'Nama sheet harus dipilih'}
+
+#         # Baca file Excel
+#         try:
+#             df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
+#         except ValueError as e:
+#             if "Worksheet named" in str(e):
+#                 return {'success': False, 'message': f'Sheet "{sheet_name}" tidak ditemukan dalam file Excel'}
+#             else:
+#                 return {'success': False, 'message': f'Error membaca sheet: {str(e)}'}
+
+#         if df.empty:
+#             return {'success': False, 'message': f'Sheet "{sheet_name}" kosong atau tidak memiliki data'}
+
+#         columns_info = get_column_info(table_name, exclude_automatic=True)
+#         required_headers = list(columns_info.keys())
+
+#         header_row, valid_headers_mapping, missing_headers, detected_primary = find_header_row_and_validate(
+#             df, required_headers, primary_header
+#         )
+
+#         data_start_row = find_data_start_row(df, header_row, detected_primary)
+
+#         excel_headers = [str(val).strip() if pd.notna(val) else "" for val in df.iloc[header_row]]
+
+#         data_df = df.iloc[data_start_row:].copy()
+#         data_df.columns = range(len(data_df.columns))
+
+#         col_index_mapping = {}
+#         for excel_header, db_header in valid_headers_mapping:
+#             for idx, header in enumerate(excel_headers):
+#                 if header == excel_header:
+#                     col_index_mapping[idx] = db_header
+#                     break
+
+#         filtered_data = {}
+#         for col_idx, db_header in col_index_mapping.items():
+#             if col_idx < len(data_df.columns):
+#                 filtered_data[db_header] = data_df.iloc[:, col_idx]
+
+#         if not filtered_data:
+#             raise ValueError("Tidak ada data yang dapat diekstrak dari file Excel")
+
+#         final_df = pd.DataFrame(filtered_data)
+#         final_df = final_df.dropna(how='all')
+#         final_df = final_df[~final_df.astype(str).apply(lambda x: x.str.strip().eq('').all(), axis=1)]
+#         final_df = final_df.reset_index(drop=True)
+
+#         if len(final_df) == 0:
+#             return {
+#                 'success': False,
+#                 'message': 'Tidak ada data valid ditemukan untuk diinsert',
+#                 'header_info': {
+#                     'header_row': header_row + 1,
+#                     'data_start_row': data_start_row + 1,
+#                     'detected_primary': detected_primary,
+#                     'found_headers': [db_header for _, db_header in valid_headers_mapping],
+#                     'missing_headers': missing_headers,
+#                     'sheet_used': sheet_name if sheet_name else 'Sheet pertama'
+#                 }
+#             }
+
+#         # Validasi batch data
+#         relevant_columns_info = {col: columns_info[col] for col in final_df.columns if col in columns_info}
+#         validated_df, is_valid, validation_errors = validate_batch_data(final_df, relevant_columns_info)
+
+#         if not is_valid:
+#             return {
+#                 'success': False,
+#                 'message': f'Validasi data gagal. {len(validation_errors)} error ditemukan.',
+#                 'validation_errors': validation_errors[:10],
+#                 'total_errors': len(validation_errors),
+#                 'header_info': {
+#                     'header_row': header_row + 1,
+#                     'data_start_row': data_start_row + 1,
+#                     'detected_primary': detected_primary,
+#                     'found_headers': [db_header for _, db_header in valid_headers_mapping],
+#                     'missing_headers': missing_headers,
+#                     'sheet_used': sheet_name if sheet_name else 'Sheet pertama'
+#                 }
+#             }
+
+#         # Gunakan process_uploaded_data untuk menangani NULL, default, dll
+#         processed_data = process_uploaded_data(validated_df, table_name)
+#         processed_df = pd.DataFrame(processed_data)
+
+#         # Insert ke database setelah proses dan validasi
+#         print(f"Data yang memiliki periode date: {periode_date}")
+#         result = insert_to_database(processed_df, table_name, periode_date, replace_existing=True)
+
+#         result['header_info'] = {
+#             'periode_date': periode_date,
+#             'header_row': header_row + 1,
+#             'data_start_row': data_start_row + 1,
+#             'detected_primary': detected_primary,
+#             'found_headers': [db_header for _, db_header in valid_headers_mapping],
+#             'missing_headers': missing_headers,
+#             'sheet_used': sheet_name if sheet_name else 'Sheet pertama'
+#         }
+
+#         if missing_headers:
+#             result['missing_headers'] = missing_headers
+#             result['warning'] = f"Header tidak ditemukan di file Excel: {', '.join(missing_headers)}. Kolom ini dilewati saat insert."
+
+#         return result
+
+#     except Exception as e:
+#         logger.error(f"Error processing Excel file: {str(e)}")
+#         raise
+
 def process_excel_file(file_path, table_name, primary_header=None, sheet_name=None, periode_date=None):
     """
-    Memproses file Excel, validasi, normalisasi null, dan insert ke database
+    Enhanced Excel processing with strict column validation
     """
     try:
         if not sheet_name:
             return {'success': False, 'message': 'Nama sheet harus dipilih'}
 
-        # Baca file Excel
+        # Read Excel file
         try:
             df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
         except ValueError as e:
@@ -734,20 +1214,53 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
         if df.empty:
             return {'success': False, 'message': f'Sheet "{sheet_name}" kosong atau tidak memiliki data'}
 
+        # Get database column information
         columns_info = get_column_info(table_name, exclude_automatic=True)
         required_headers = list(columns_info.keys())
 
-        header_row, valid_headers_mapping, missing_headers, detected_primary = find_header_row_and_validate(
-            df, required_headers, primary_header
-        )
-
+        # Enhanced header validation with strict checking
+        try:
+            header_row, valid_headers_mapping, missing_headers, detected_primary = find_header_row_and_validate(
+                df, required_headers, primary_header
+            )
+        except ValueError as validation_error:
+            # Extract actual Excel headers for error display
+            excel_headers_for_error = []
+            if len(df) > 0:
+                # Try to find the most likely header row for error display
+                for idx in range(min(10, len(df))):
+                    row_data = [str(val).strip() if pd.notna(val) else "" for val in df.iloc[idx]]
+                    non_empty_headers = [h for h in row_data if h]
+                    if len(non_empty_headers) >= 2:  # At least 2 non-empty headers
+                        excel_headers_for_error = row_data
+                        break
+                
+                # If no good header row found, use first row
+                if not excel_headers_for_error:
+                    excel_headers_for_error = [str(val).strip() if pd.notna(val) else "" for val in df.iloc[0]]
+            
+            return {
+                'success': False,
+                'message': str(validation_error),
+                'validation_type': 'column_structure',
+                'header_info': {
+                    'required_headers': required_headers,
+                    'excel_headers': excel_headers_for_error
+                }
+            }
+        
+        logger.info(f"Strict validation passed: {len(valid_headers_mapping)} columns matched")
+        
+        # Continue with rest of the processing...
+        # Find data start row
         data_start_row = find_data_start_row(df, header_row, detected_primary)
 
-        excel_headers = [str(val).strip() if pd.notna(val) else "" for val in df.iloc[header_row]]
-
+        # Extract and map data
+        excel_headers = [normalize_column_name(val) for val in df.iloc[header_row]]
         data_df = df.iloc[data_start_row:].copy()
         data_df.columns = range(len(data_df.columns))
 
+        # Create column index mapping
         col_index_mapping = {}
         for excel_header, db_header in valid_headers_mapping:
             for idx, header in enumerate(excel_headers):
@@ -755,15 +1268,31 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
                     col_index_mapping[idx] = db_header
                     break
 
+        # Extract mapped data
         filtered_data = {}
         for col_idx, db_header in col_index_mapping.items():
             if col_idx < len(data_df.columns):
                 filtered_data[db_header] = data_df.iloc[:, col_idx]
 
+        # Add default values for missing columns (should be none in strict mode)
+        for missing_col in missing_headers:
+            if missing_col in columns_info:
+                col_info = columns_info[missing_col]
+                if col_info.get('default_value') is not None:
+                    default_val = process_default_value(col_info['default_value'], col_info)
+                    filtered_data[missing_col] = [default_val] * len(data_df)
+                elif col_info.get('is_nullable', False):
+                    filtered_data[missing_col] = [None] * len(data_df)
+                else:
+                    logger.warning(f"Missing required column '{missing_col}' has no default value and is not nullable")
+
         if not filtered_data:
             raise ValueError("Tidak ada data yang dapat diekstrak dari file Excel")
 
+        # Create final DataFrame
         final_df = pd.DataFrame(filtered_data)
+        
+        # Clean empty rows
         final_df = final_df.dropna(how='all')
         final_df = final_df[~final_df.astype(str).apply(lambda x: x.str.strip().eq('').all(), axis=1)]
         final_df = final_df.reset_index(drop=True)
@@ -778,38 +1307,69 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
                     'detected_primary': detected_primary,
                     'found_headers': [db_header for _, db_header in valid_headers_mapping],
                     'missing_headers': missing_headers,
-                    'sheet_used': sheet_name if sheet_name else 'Sheet pertama'
+                    'sheet_used': sheet_name
                 }
             }
 
-        # Validasi batch data
+        # Continue with validation and database insertion...
         relevant_columns_info = {col: columns_info[col] for col in final_df.columns if col in columns_info}
-        validated_df, is_valid, validation_errors = validate_batch_data(final_df, relevant_columns_info)
-
-        if not is_valid:
-            return {
-                'success': False,
-                'message': f'Validasi data gagal. {len(validation_errors)} error ditemukan.',
-                'validation_errors': validation_errors[:10],
-                'total_errors': len(validation_errors),
-                'header_info': {
-                    'header_row': header_row + 1,
-                    'data_start_row': data_start_row + 1,
-                    'detected_primary': detected_primary,
-                    'found_headers': [db_header for _, db_header in valid_headers_mapping],
-                    'missing_headers': missing_headers,
-                    'sheet_used': sheet_name if sheet_name else 'Sheet pertama'
+        
+        validation_errors = []
+        validated_data = {}
+        
+        # Initialize validated data structure
+        for col in final_df.columns:
+            validated_data[col] = []
+        
+        # Validate each row with improved error handling
+        for idx, row in final_df.iterrows():
+            row_data = {}
+            
+            for col in final_df.columns:
+                if col in relevant_columns_info:
+                    value = row[col]
+                    column_info = relevant_columns_info[col]
+                    
+                    converted_value, is_valid, error_msg = validate_and_convert_value(
+                        value, column_info, col
+                    )
+                    
+                    if not is_valid:
+                        validation_errors.append(f"Row {idx + 1}, Column '{col}': {error_msg}")
+                        row_data[col] = None
+                    else:
+                        row_data[col] = converted_value
+                else:
+                    row_data[col] = row[col]
+            
+            # Add row data
+            for col in final_df.columns:
+                validated_data[col].append(row_data.get(col, row[col]))
+        
+        # Create validated DataFrame
+        validated_df = pd.DataFrame(validated_data)
+        
+        # Enhanced validation error handling
+        if validation_errors:
+            error_rate = len(validation_errors) / (len(final_df) * len(final_df.columns))
+            if error_rate > 0.1:  # More than 10% error rate
+                return {
+                    'success': False,
+                    'message': f'Validasi data gagal. Tingkat kesalahan: {error_rate:.1%}',
+                    'validation_errors': validation_errors[:20],
+                    'total_errors': len(validation_errors),
+                    'rows_processed': len(final_df),
+                    'validation_type': 'data_validation'
                 }
-            }
 
-        # Gunakan process_uploaded_data untuk menangani NULL, default, dll
+        # Process uploaded data
         processed_data = process_uploaded_data(validated_df, table_name)
         processed_df = pd.DataFrame(processed_data)
 
-        # Insert ke database setelah proses dan validasi
-        print(f"Data yang memiliki periode date: {periode_date}")
+        # Insert to database
         result = insert_to_database(processed_df, table_name, periode_date, replace_existing=True)
 
+        # Add detailed results
         result['header_info'] = {
             'periode_date': periode_date,
             'header_row': header_row + 1,
@@ -817,18 +1377,20 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
             'detected_primary': detected_primary,
             'found_headers': [db_header for _, db_header in valid_headers_mapping],
             'missing_headers': missing_headers,
-            'sheet_used': sheet_name if sheet_name else 'Sheet pertama'
+            'sheet_used': sheet_name,
+            'matched_columns': len(valid_headers_mapping),
+            'required_columns': len(required_headers),
+            'validation_warnings': len(validation_errors)
         }
 
-        if missing_headers:
-            result['missing_headers'] = missing_headers
-            result['warning'] = f"Header tidak ditemukan di file Excel: {', '.join(missing_headers)}. Kolom ini dilewati saat insert."
+        if validation_errors and len(validation_errors) <= 10:
+            result['validation_warnings'] = validation_errors
 
         return result
 
     except Exception as e:
         logger.error(f"Error processing Excel file: {str(e)}")
-        raise
+        return {'success': False, 'message': f'Error processing file: {str(e)}'}
 
 def insert_to_database(df, table_name, periode_date=None, replace_existing=True):
     """
@@ -1255,192 +1817,6 @@ def convert_value_for_sql_server(value):
     # Default case
     else:
         return str(value)
-
-def safe_executemany_sql_server(cursor, query, data_batch):
-    """
-    Safe executemany method specifically for SQL Server driver
-    """
-    try:
-        # Convert semua data dalam batch
-        converted_batch = []
-        for row in data_batch:
-            converted_row = tuple(convert_value_for_sql_server(value) for value in row)
-            converted_batch.append(converted_row)
-        
-        # Gunakan executemany dengan data yang sudah diconvert
-        cursor.executemany(query, converted_batch)
-        return True, None
-        
-    except pyodbc.Error as e:
-        return False, str(e)
-
-def insert_batch_with_fallback(cursor, table_name, columns, data_batch):
-    """
-    Insert batch dengan fallback strategy untuk SQL Server driver
-    """
-    placeholders = ', '.join(['?' for _ in columns])
-    column_names = ', '.join(columns)
-    query = f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})"
-    
-    print(f"Attempting batch insert of {len(data_batch)} records...")
-    
-    # Coba batch insert dulu
-    success, error = safe_executemany_sql_server(cursor, query, data_batch)
-    
-    if success:
-        print("Batch insert successful!")
-        return True
-    
-    print(f"Batch insert failed: {error}")
-    print("Falling back to individual inserts...")
-    
-    # Fallback ke individual insert
-    return insert_individual_rows(cursor, query, data_batch)
-
-def insert_individual_rows(cursor, query, data_batch):
-    """
-    Insert rows satu per satu dengan detailed error handling
-    """
-    success_count = 0
-    error_count = 0
-    
-    for i, row in enumerate(data_batch):
-        try:
-            converted_row = tuple(convert_value_for_sql_server(value) for value in row)
-            cursor.execute(query, converted_row)
-            success_count += 1
-            
-            # Commit setiap beberapa rows untuk menghindari timeout
-            if success_count % 100 == 0:
-                cursor.commit()
-                
-        except pyodbc.Error as e:
-            error_count += 1
-            print(f"Error inserting row {i+1}: {e}")
-            
-            # Debug info untuk row yang bermasalah
-            print(f"Problematic row data:")
-            for j, value in enumerate(row):
-                print(f"  Field {j}: {type(value).__name__} = {repr(value)[:100]}")
-            print("-" * 50)
-    
-    print(f"Individual insert completed: {success_count} success, {error_count} errors")
-    return success_count > 0
-
-def insert_to_master_uploader(data_list, table_name="MasterUploader"):
-    """
-    Main function untuk insert ke database dengan SQL Server driver
-    """
-    conn = None
-    cursor = None
-    
-    try:
-        print("Connecting to database...")
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Pastikan data tidak kosong
-        if not data_list:
-            print("No data to insert")
-            return False
-        
-        # Contoh: ambil columns dari data pertama (sesuaikan dengan struktur tabel Anda)
-        if isinstance(data_list[0], dict):
-            columns = list(data_list[0].keys())
-            batch_data = [[item.get(col) for col in columns] for item in data_list]
-        else:
-            # Jika data_list berupa list of lists/tuples
-            # Anda perlu define columns secara manual
-            columns = ["column1", "column2", "column3"]  # Ganti sesuai struktur tabel
-            batch_data = data_list
-        
-        print(f"Columns: {columns}")
-        print(f"Data sample: {batch_data[0] if batch_data else 'No data'}")
-        
-        # Debug data types sebelum insert
-        debug_data_types(batch_data[:3], columns)
-        
-        # Lakukan insert
-        success = insert_batch_with_fallback(cursor, table_name, columns, batch_data)
-        
-        if success:
-            conn.commit()
-            print(f"✅ Successfully completed insert operation for {table_name}")
-            return True
-        else:
-            conn.rollback()
-            print(f"❌ Insert operation failed for {table_name}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Database operation error: {e}")
-        if conn:
-            conn.rollback()
-        return False
-        
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-        print("Database connection closed")
-
-def debug_data_types(data_batch, columns):
-    """
-    Debug function untuk melihat data types sebelum insert
-    """
-    print("\n=== DEBUG: Data Types Analysis ===")
-    if not data_batch:
-        print("No data to analyze")
-        return
-        
-    for i, row in enumerate(data_batch):
-        print(f"Row {i+1}:")
-        for j, (col_name, value) in enumerate(zip(columns, row)):
-            value_type = type(value).__name__
-            value_repr = repr(value)[:50] + "..." if len(repr(value)) > 50 else repr(value)
-            
-            # Highlight potentially problematic types
-            if value_type in ['bool', 'list', 'dict', 'tuple', 'bytes']:
-                print(f"  ⚠️  {col_name}: {value_type} = {value_repr}")
-            else:
-                print(f"  ✅  {col_name}: {value_type} = {value_repr}")
-    print("================================\n")
-
-def insert_to_MasterUploader(conn, username, division, template, sheets, file_upload, period_date, upload_date):
-    """
-    Insert ke tabel MasterUploader dengan proper data conversion
-    """
-    cursor = conn.cursor()
-    
-    try:
-        # Convert values menggunakan fungsi yang sudah ada
-        converted_values = [
-            convert_value_for_sql_server(username),
-            convert_value_for_sql_server(division),
-            convert_value_for_sql_server(template),
-            convert_value_for_sql_server(sheets),
-            convert_value_for_sql_server(file_upload),
-            convert_value_for_sql_server(period_date),
-            convert_value_for_sql_server(upload_date)
-        ]
-        
-        insert_query = """
-            INSERT INTO MasterUploader (username, division, template, sheets, file_upload, period_date, upload_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """
-        
-        cursor.execute(insert_query, tuple(converted_values))
-        conn.commit()
-        print("✅ Successfully inserted to MasterUploader")
-        
-    except pyodbc.Error as e:
-        print(f"❌ Error inserting to MasterUploader: {e}")
-        print(f"Data being inserted: {converted_values}")
-        conn.rollback()
-        raise
-    finally:
-        cursor.close()
 
 def safe_insert_single_record(table_name, columns, values):
     """

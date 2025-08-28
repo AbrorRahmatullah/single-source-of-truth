@@ -325,34 +325,33 @@
             const periodeDate = document.getElementById('periode_date');
             const file = fileInput.files[0];
             
-            // Enhanced validation
+            // Enhanced validation with user-friendly messages
             if (!tableSelect.value) {
-                showAlert('warning', 'Pilih template terlebih dahulu');
+                showAlert('warning', 'Pilih template database terlebih dahulu');
                 tableSelect.focus();
                 return;
             }
             
             if (!file) {
-                showAlert('warning', 'Pilih file Excel terlebih dahulu');
+                showAlert('warning', 'Pilih file Excel yang akan diupload');
                 fileInput.focus();
                 return;
             }
             
             if (!sheetSelect.value) {
-                showAlert('warning', 'Pilih sheet yang akan diproses');
+                showAlert('warning', 'Pilih sheet Excel yang akan diproses');
                 sheetSelect.focus();
                 return;
             }
             
             if (!periodeDate.value) {
-                showAlert('warning', 'Tentukan periode date terlebih dahulu');
+                showAlert('warning', 'Tentukan periode date untuk data ini');
                 periodeDate.focus();
                 return;
             }
             
-            // Validate date format
             if (!validateMonthYear(periodeDate.value)) {
-                showAlert('error', 'Format periode tidak valid. Gunakan format YYYY-MM');
+                showAlert('error', 'Format periode tidak valid. Gunakan format YYYY-MM (contoh: 2024-01)');
                 periodeDate.focus();
                 return;
             }
@@ -377,15 +376,15 @@
             .then(result => {
                 if (result.success) {
                     if (result.exists) {
-                        const confirmReplace = confirm(`⚠️ Data untuk periode ${periodeDate.value} sudah ada di tabel ${tableSelect.value}.\n\nApakah Anda yakin ingin mengganti data tersebut?\n\n⚠️ Perhatian: Data lama akan dihapus dan tidak dapat dikembalikan!`);
-                        if (!confirmReplace) {
+                        const confirmMessage = `⚠️ Data untuk periode ${periodeDate.value} sudah ada di tabel ${tableSelect.value}.\n\nApakah Anda yakin ingin mengganti data tersebut?\n\n⚠️ Perhatian: Data lama akan dihapus dan tidak dapat dikembalikan!`;
+                        if (!confirm(confirmMessage)) {
                             showAlert('info', 'Proses upload dibatalkan oleh user.');
                             return;
                         }
                     }
 
                     // Proceed with upload
-                    showLoading(true, 'Validating and processing Excel file...');
+                    showLoading(true, 'Melakukan validasi struktur kolom dan memproses data...');
                     hideResult();
 
                     fetch('/upload', {
@@ -397,32 +396,40 @@
                         showLoading(false);
                         if (data.success) {
                             const details = createResultDetails(data);
-                            showResult('success', 'Upload Successful! 🎉',
-                                'File Excel berhasil divalidasi dan data telah dimasukkan ke database.', details);
-                        } else {
-                            // Enhanced error handling untuk berbagai jenis error
-                            let errorDetails = '';
+                            let successMessage = 'File Excel berhasil divalidasi dan data telah dimasukkan ke database.';
                             
-                            if (data.validation_errors) {
-                                // Validation errors - handled in showResult
-                                errorDetails = '';
-                            } else if (data.found_headers && data.expected_headers) {
-                                // Header mismatch errors
-                                errorDetails = createErrorDetails(data);
-                            } else {
-                                // General errors
-                                errorDetails = data.header_info ? createHeaderInfoDetails(data.header_info) : '';
+                            if (data.header_info && data.header_info.matched_columns !== undefined) {
+                                const matchPercentage = Math.round((data.header_info.matched_columns / data.header_info.required_columns) * 100);
+                                if (matchPercentage < 100) {
+                                    successMessage += ` Sistem berhasil mencocokkan ${matchPercentage}% kolom dengan menggunakan strategi pencocokan lanjutan.`;
+                                }
                             }
                             
-                            showResult('error', 'Upload Failed! ❌',
-                                data.message || 'Terjadi kesalahan saat memproses file Excel.', errorDetails, data);
+                            showResult('success', 'Upload Berhasil! 🎉', successMessage, details);
+                        } else {
+                            // Enhanced error handling berdasarkan validation type
+                            let errorTitle = '';
+                            let errorMessage = data.message || 'Terjadi kesalahan saat memproses file Excel.';
+                            let errorDetails = '';
+                            
+                            if (data.validation_type === 'column_structure') {
+                                // errorTitle = 'Struktur Kolom Tidak Sesuai! 🚫';
+                                errorDetails = ''; // Details akan ditangani dalam showResult
+                            } else if (data.validation_type === 'data_validation') {
+                                errorTitle = 'Validasi Data Gagal! 🚨';
+                                errorDetails = createErrorDetails(data);
+                            } else {
+                                errorDetails = createErrorDetails(data);
+                            }
+                            
+                            showResult('error', errorTitle, errorMessage, errorDetails, data);
                         }
                     })
                     .catch(error => {
                         showLoading(false);
                         console.error('Upload Error:', error);
-                        showResult('error', 'Upload Failed! ❌', 
-                            'Terjadi kesalahan jaringan saat mengupload file. Silakan coba lagi.', '');
+                        showResult('error', 'Upload Gagal! ❌', 
+                            'Terjadi kesalahan jaringan saat mengupload file. Silakan periksa koneksi dan coba lagi.', '');
                     });
 
                 } else {
@@ -455,6 +462,124 @@
             }
             
             details += '</table></div>';
+            return details;
+        }
+
+        function createColumnValidationErrorDetails(data) {
+            if (!data.validation_type) return '';
+            
+            let details = '<div style="margin-top: 15px;">';
+            
+            if (data.validation_type === 'column_structure') {
+                // details += '<h5 style="color: #dc2626; margin-bottom: 12px;">🚨 Struktur Kolom Tidak Sesuai</h5>';
+                
+                // Show comparison table
+                /* if (data.header_info && data.header_info.required_headers && data.header_info.excel_headers) {
+                    const requiredHeaders = data.header_info.required_headers;
+                    const excelHeaders = data.header_info.excel_headers;
+                    
+                    details += '<div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin-bottom: 15px;">';
+                    details += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">';
+                    
+                    // Column count comparison
+                    details += '<div style="text-align: center;">';
+                    details += `<div style="font-size: 1.8rem; font-weight: bold; color: ${excelHeaders.length === requiredHeaders.length ? '#059669' : '#dc2626'};">${excelHeaders.length}</div>`;
+                    details += '<div style="font-size: 0.875rem; color: #6b7280;">Kolom di Excel</div>';
+                    details += '</div>';
+                    
+                    details += '<div style="text-align: center;">';
+                    details += `<div style="font-size: 1.8rem; font-weight: bold; color: #374151;">${requiredHeaders.length}</div>`;
+                    details += '<div style="font-size: 0.875rem; color: #6b7280;">Kolom Dibutuhkan</div>';
+                    details += '</div>';
+                    
+                    details += '</div></div>';
+                    
+                    // Detailed column comparison
+                    details += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">';
+                    
+                    // Excel columns
+                    details += '<div>';
+                    details += '<h6 style="color: #374151; margin-bottom: 8px; border-bottom: 2px solid #e5e7eb; padding-bottom: 4px;">📄 Kolom di File Excel</h6>';
+                    details += '<div style="background: #f9fafb; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; max-height: 250px; overflow-y: auto;">';
+                    
+                    if (excelHeaders.length === 0) {
+                        details += '<div style="color: #6b7280; font-style: italic; text-align: center; padding: 20px;">Tidak ada kolom ditemukan</div>';
+                    } else {
+                        excelHeaders.forEach((header, index) => {
+                            const isMatched = requiredHeaders.some(req => req.toLowerCase() === header.toLowerCase() || req.toLowerCase() === header.replace(/\s+/g, '_').toLowerCase());
+                            const statusIcon = isMatched ? '✅' : '❌';
+                            const statusColor = isMatched ? '#059669' : '#dc2626';
+                            
+                            details += `<div style="padding: 6px 0; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 8px;">`;
+                            details += `<span style="color: ${statusColor}; font-weight: bold;">${statusIcon}</span>`;
+                            // details += `<span style="color: #374151; font-size: 0.875rem;">${index + 1}. ${header || '(kosong)'}</span>`;
+                            details += '</div>';
+                        });
+                    }
+                    
+                    details += '</div></div>';
+                    
+                    // Required columns
+                    details += '<div>';
+                    details += '<h6 style="color: #374151; margin-bottom: 8px; border-bottom: 2px solid #e5e7eb; padding-bottom: 4px;">🗄️ Kolom Template Database</h6>';
+                    details += '<div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 12px; max-height: 250px; overflow-y: auto;">';
+                    
+                    requiredHeaders.forEach((header, index) => {
+                        const isFound = excelHeaders.some(excel => excel.toLowerCase() === header.toLowerCase() || excel.replace(/\s+/g, '_').toLowerCase() === header.toLowerCase());
+                        const statusIcon = isFound ? '✅' : '❌';
+                        const statusColor = isFound ? '#059669' : '#dc2626';
+                        
+                        details += `<div style="padding: 6px 0; border-bottom: 1px solid #bbf7d0; display: flex; align-items: center; gap: 8px;">`;
+                        details += `<span style="color: ${statusColor}; font-weight: bold;">${statusIcon}</span>`;
+                        details += `<span style="color: #374151; font-size: 0.875rem;">${index + 1}. ${header}</span>`;
+                        details += '</div>';
+                    });
+                    
+                    details += '</div></div>';
+                    details += '</div>';
+                } */
+                
+                // Enhanced suggestions for column structure issues
+                const columnSuggestions = [
+                    'Pastikan file Excel memiliki jumlah kolom yang sama persis dengan template yang telah ditentukan',
+                    'Periksa nama kolom - harus sesuai dengan template (tidak case-sensitive)',
+                    'Spasi dalam nama kolom akan dikonversi otomatis ke underscore (_)',
+                    'Jangan ada kolom kosong atau tambahan yang tidak diperlukan',
+                    'Gunakan tombol "Preview Header DB" untuk melihat struktur kolom yang dibutuhkan',
+                    'Pastikan header berada di baris yang benar dan tidak ada baris kosong sebelumnya'
+                ];
+                
+                details += '<div style="background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px; padding: 16px; margin-top: 15px;">';
+                details += '<h6 style="color: #1e40af; margin-bottom: 12px;">💡 Langkah Perbaikan:</h6>';
+                details += '<ol style="margin: 0; padding-left: 20px; color: #1e40af; line-height: 1.8;">';
+                columnSuggestions.forEach(suggestion => {
+                    details += `<li style="margin-bottom: 8px;">${suggestion}</li>`;
+                });
+                details += '</ol>';
+                details += '</div>';
+                
+            } else if (data.validation_type === 'data_validation') {
+                // Handle data validation errors (existing logic)
+                details += '<h5 style="color: #dc2626; margin-bottom: 12px;">📊 Validasi Data Gagal</h5>';
+                
+                if (data.validation_errors && data.total_errors) {
+                    const errorPatterns = analyzeErrorPatterns(data.validation_errors);
+                    
+                    details += `<div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin-bottom: 15px;">`;
+                    details += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; text-align: center;">`;
+                    details += `<div><div style="font-size: 1.8rem; font-weight: bold; color: #dc2626;">${data.total_errors}</div><div style="font-size: 0.875rem; color: #6b7280;">Total Error</div></div>`;
+                    details += `<div><div style="font-size: 1.8rem; font-weight: bold; color: #dc2626;">${data.rows_processed || 0}</div><div style="font-size: 0.875rem; color: #6b7280;">Baris Diproses</div></div>`;
+                    details += `<div><div style="font-size: 1.8rem; font-weight: bold; color: #dc2626;">0</div><div style="font-size: 0.875rem; color: #6b7280;">Baris Berhasil</div></div>`;
+                    details += `</div></div>`;
+                    
+                    details += '<div style="background: #fef2f2; padding: 12px; border-radius: 6px; margin: 12px 0;">';
+                    details += '<h6 style="color: #dc2626; margin-bottom: 8px;">🔍 Analisis Error:</h6>';
+                    details += createErrorPatternSummary(errorPatterns);
+                    details += '</div>';
+                }
+            }
+            
+            details += '</div>';
             return details;
         }
 
@@ -493,68 +618,128 @@
             result.style.display = 'block';
             resultTitle.innerHTML = title;
             
-            // Handle validation errors dengan informasi lebih lengkap
-            if (type === 'error' && data && data.validation_errors) {
-                const totalErrors = data.total_errors || data.validation_errors.length;
-                const displayedErrors = Math.min(data.validation_errors.length, 5); // Show max 5 errors in summary
-                
-                // Create validation error summary
-                let errorSummary = `
-                    <div class="validation-error-summary">
-                        <h5>🚨 Data Validation Failed</h5>
-                        <div class="error-stats">
-                            <div class="error-stat">
-                                <div class="error-stat-number">${totalErrors}</div>
-                                <div class="error-stat-label">Total Errors</div>
+            // Enhanced error handling berdasarkan validation type
+            if (type === 'error' && data) {
+                if (data.validation_type === 'column_structure') {
+                    // Column structure validation error
+                    const columnErrorDetails = createColumnValidationErrorDetails(data);
+                    
+                    resultMessage.innerHTML = `
+                        <div class="result-text">
+                            <div style="background: #fef2f2; border-left: 4px solid #dc2626; padding: 16px; margin-bottom: 16px; border-radius: 0 8px 8px 0;">
+                                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                                    <span style="font-size: 1.5rem;">🚫</span>
+                                    <div>
+                                        <h4 style="margin: 0; color: #dc2626;">Upload Gagal - Struktur Kolom Tidak Sesuai</h4>
+                                        <p style="margin: 4px 0 0 0; color: #991b1b; font-size: 0.9rem;">File Excel tidak dapat diproses karena struktur kolom tidak sesuai dengan template yang telah ditentukan.</p>
+                                    </div>
+                                </div>
+                                <div style="color: #dc2626; font-weight: 500;">
+                                    ⚠️ Tidak ada data yang diinsert ke database. Perbaiki struktur kolom terlebih dahulu.
+                                </div>
                             </div>
-                            <div class="error-stat">
-                                <div class="error-stat-number">${data.inserted_rows || 0}</div>
-                                <div class="error-stat-label">Rows Processed</div>
-                            </div>
-                            <div class="error-stat">
-                                <div class="error-stat-number">0</div>
-                                <div class="error-stat-label">Rows Inserted</div>
-                            </div>
+                            ${message}
                         </div>
-                        <p style="color: #dc2626; font-weight: 500; margin: 12px 0;">
-                            ⚠️ The entire operation was cancelled due to validation errors. No data was inserted into the database.
-                        </p>
-                `;
-                
-                // Show first few errors in summary
-                if (data.validation_errors.length > 0) {
-                    errorSummary += '<h6 style="color: #374151; margin: 16px 0 8px 0;">Detail Errors:</h6>';
-                    errorSummary += '<ul style="margin: 0; padding-left: 0; list-style: none;">';
+                        ${columnErrorDetails}
+                    `;
+                } else if (data.validation_type === 'data_validation') {
+                    // Data validation error (existing logic)
+                    const totalErrors = data.total_errors || data.validation_errors.length;
+                    const displayedErrors = Math.min(data.validation_errors.length, 5);
+                    const errorPatterns = analyzeErrorPatterns(data.validation_errors);
                     
-                    data.validation_errors.slice(0, displayedErrors).forEach((error, index) => {
-                        const formattedError = formatErrorMessage(error);
-                        errorSummary += `<li class="error-item">${formattedError}</li>`;
-                    });
-                    
-                    errorSummary += '</ul>';
-                    
-                    if (totalErrors > displayedErrors) {
-                        errorSummary += `
-                            <div style="text-align: center; margin-top: 12px;">
-                                <button type="button" class="btn btn-secondary" onclick="showValidationModal(${JSON.stringify(data).replace(/"/g, '&quot;')})">
-                                    View All ${totalErrors} Errors
-                                </button>
+                    let errorSummary = `
+                        <div class="validation-error-summary">
+                            <div style="background: #fef2f2; border-left: 4px solid #dc2626; padding: 16px; margin-bottom: 16px; border-radius: 0 8px 8px 0;">
+                                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                                    <span style="font-size: 1.5rem;">🚨</span>
+                                    <div>
+                                        <h4 style="margin: 0; color: #dc2626;">Upload Gagal - Validasi Data Error</h4>
+                                        <p style="margin: 4px 0 0 0; color: #991b1b; font-size: 0.9rem;">Ditemukan ${totalErrors} error dalam data yang mengakibatkan gagal validasi.</p>
+                                    </div>
+                                </div>
+                                <div style="color: #dc2626; font-weight: 500;">
+                                    ⚠️ Seluruh operasi dibatalkan. Tidak ada data yang diinsert ke database.
+                                </div>
                             </div>
-                        `;
+                            
+                            <div class="error-stats">
+                                <div class="error-stat">
+                                    <div class="error-stat-number">${totalErrors}</div>
+                                    <div class="error-stat-label">Total Errors</div>
+                                </div>
+                                <div class="error-stat">
+                                    <div class="error-stat-number">${data.rows_processed || 0}</div>
+                                    <div class="error-stat-label">Rows Processed</div>
+                                </div>
+                                <div class="error-stat">
+                                    <div class="error-stat-number">0</div>
+                                    <div class="error-stat-label">Rows Inserted</div>
+                                </div>
+                            </div>
+                            
+                            <div style="background: #fef2f2; padding: 12px; border-radius: 6px; margin: 12px 0;">
+                                <h6 style="color: #dc2626; margin-bottom: 8px;">🔍 Error Analysis:</h6>
+                                ${createErrorPatternSummary(errorPatterns)}
+                            </div>
+                    `;
+                    
+                    // Show sample errors
+                    if (data.validation_errors.length > 0) {
+                        errorSummary += '<h6 style="color: #374151; margin: 16px 0 8px 0;">Sample Errors:</h6>';
+                        errorSummary += '<ul style="margin: 0; padding-left: 0; list-style: none;">';
+                        
+                        data.validation_errors.slice(0, displayedErrors).forEach((error, index) => {
+                            const formattedError = formatErrorMessage(error);
+                            errorSummary += `<li class="error-item">${formattedError}</li>`;
+                        });
+                        
+                        errorSummary += '</ul>';
+                        
+                        if (totalErrors > displayedErrors) {
+                            errorSummary += `
+                                <div style="text-align: center; margin-top: 12px;">
+                                    <button type="button" class="btn btn-secondary" onclick="showValidationModal(${JSON.stringify(data).replace(/"/g, '&quot;')})">
+                                        View All ${totalErrors} Errors
+                                    </button>
+                                </div>
+                            `;
+                        }
                     }
+                    
+                    errorSummary += '</div>';
+                    
+                    resultMessage.innerHTML = `
+                        <div class="result-text">${message}</div>
+                        ${errorSummary}
+                    `;
+                } else {
+                    // Generic error handling
+                    resultMessage.innerHTML = `
+                        <div class="result-text">
+                            <div style="background: #fef2f2; border-left: 4px solid #dc2626; padding: 16px; margin-bottom: 16px; border-radius: 0 8px 8px 0;">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <span style="font-size: 1.5rem;">❌</span>
+                                    <div>
+                                        <h4 style="margin: 0; color: #dc2626;">Upload Gagal</h4>
+                                        <p style="margin: 4px 0 0 0; color: #991b1b; font-size: 0.9rem;">Terjadi kesalahan saat memproses file Excel.</p>
+                                    </div>
+                                </div>
+                            </div>
+                            ${message}
+                        </div>
+                    `;
                 }
-                
-                errorSummary += '</div>';
-                
-                resultMessage.innerHTML = `
-                    <div class="result-text">${message}</div>
-                    ${errorSummary}
-                `;
             } else {
                 resultMessage.innerHTML = message;
             }
             
-            resultDetails.innerHTML = details;
+            // Set details based on validation type
+            if (type === 'error' && data && data.validation_type === 'column_structure') {
+                resultDetails.innerHTML = ''; // Details sudah included dalam message
+            } else {
+                resultDetails.innerHTML = details;
+            }
             
             // Scroll to result
             result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -563,6 +748,81 @@
         function hideResult() {
             document.getElementById('result').style.display = 'none';
             document.getElementById('analysisResult').style.display = 'none';
+        }
+
+        function analyzeErrorPatterns(errors) {
+            const patterns = {
+                nullConstraint: 0,
+                typeConversion: 0,
+                lengthExceeded: 0,
+                dateFormat: 0,
+                numericFormat: 0,
+                other: 0
+            };
+            
+            errors.forEach(error => {
+                const errorLower = error.toLowerCase();
+                if (errorLower.includes('cannot be null') || errorLower.includes('null constraint')) {
+                    patterns.nullConstraint++;
+                } else if (errorLower.includes('invalid') && (errorLower.includes('integer') || errorLower.includes('numeric') || errorLower.includes('decimal'))) {
+                    patterns.numericFormat++;
+                } else if (errorLower.includes('invalid') && errorLower.includes('date')) {
+                    patterns.dateFormat++;
+                } else if (errorLower.includes('exceeds maximum length')) {
+                    patterns.lengthExceeded++;
+                } else if (errorLower.includes('type conversion') || errorLower.includes('invalid')) {
+                    patterns.typeConversion++;
+                } else {
+                    patterns.other++;
+                }
+            });
+            
+            return patterns;
+        }
+
+        function createErrorPatternSummary(patterns) {
+            const suggestions = [];
+            let summary = '';
+            
+            if (patterns.nullConstraint > 0) {
+                summary += `<div style="color: #dc2626; margin-bottom: 4px;">• ${patterns.nullConstraint} NULL constraint violations</div>`;
+                suggestions.push('Pastikan kolom wajib tidak kosong atau gunakan nilai default');
+            }
+            
+            if (patterns.numericFormat > 0) {
+                summary += `<div style="color: #dc2626; margin-bottom: 4px;">• ${patterns.numericFormat} invalid numeric values</div>`;
+                suggestions.push('Periksa format angka - hapus simbol mata uang, gunakan titik untuk desimal');
+            }
+            
+            if (patterns.dateFormat > 0) {
+                summary += `<div style="color: #dc2626; margin-bottom: 4px;">• ${patterns.dateFormat} invalid date formats</div>`;
+                suggestions.push('Gunakan format tanggal YYYY-MM-DD atau MM/DD/YYYY');
+            }
+            
+            if (patterns.lengthExceeded > 0) {
+                summary += `<div style="color: #dc2626; margin-bottom: 4px;">• ${patterns.lengthExceeded} text length exceeded</div>`;
+                suggestions.push('Singkat text yang terlalu panjang sesuai batas kolom database');
+            }
+            
+            if (patterns.typeConversion > 0) {
+                summary += `<div style="color: #dc2626; margin-bottom: 4px;">• ${patterns.typeConversion} type conversion errors</div>`;
+                suggestions.push('Pastikan tipe data sesuai dengan kolom database');
+            }
+            
+            if (patterns.other > 0) {
+                summary += `<div style="color: #dc2626; margin-bottom: 4px;">• ${patterns.other} other validation errors</div>`;
+            }
+            
+            if (suggestions.length > 0) {
+                summary += '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #fecaca;">';
+                summary += '<div style="font-weight: 500; color: #374151; margin-bottom: 4px;">💡 Quick Fixes:</div>';
+                suggestions.forEach(suggestion => {
+                    summary += `<div style="font-size: 0.875rem; color: #6b7280; margin-bottom: 2px;">- ${suggestion}</div>`;
+                });
+                summary += '</div>';
+            }
+            
+            return summary;
         }
 
         function showAnalysisResult(analysis) {
@@ -780,37 +1040,42 @@
             let details = '<table style="width: 100%; margin-top: 15px;">';
             details += `<tr><th style="width: 40%;">Baris Berhasil Insert</th><td><strong style="color: #059669;">${(data.inserted_rows || 0).toLocaleString()}</strong></td></tr>`;
             
-            // Tambahkan info sheet yang digunakan
-            if (data.header_info && data.header_info.sheet_used) {
-                details += `<tr><th>Sheet Digunakan</th><td><strong>${data.header_info.sheet_used}</strong></td></tr>`;
-            }
-            
-            // Tambahkan info periode date dengan format Indonesia
-            if (data.periode_date) {
-                // Function to format date to Indonesian
-                function formatToIndonesianDate(dateString) {
-                    const monthNames = [
-                        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-                        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-                    ];
-                    
-                    /* const dayNames = [
-                        'Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'
-                    ]; */
-                    
-                    // Parse the date string
-                    const date = new Date(dateString);
-                    
-                    // Get day name, day, month name, and year
-                    /* const dayName = dayNames[date.getDay()];
-                    const day = String(date.getDate()).padStart(2, '0'); */
-                    const monthName = monthNames[date.getMonth()];
-                    const year = date.getFullYear();
-                    
-                    return `${monthName} ${year}`;
+            // Enhanced header info display
+            if (data.header_info) {
+                const headerInfo = data.header_info;
+                
+                if (headerInfo.sheet_used) {
+                    details += `<tr><th>Sheet Digunakan</th><td><strong>${headerInfo.sheet_used}</strong></td></tr>`;
                 }
                 
-                const formattedDate = formatToIndonesianDate(data.periode_date);
+                // Column matching statistics
+                if (headerInfo.matched_columns !== undefined && headerInfo.required_columns !== undefined) {
+                    const matchPercentage = Math.round((headerInfo.matched_columns / headerInfo.required_columns) * 100);
+                    details += `<tr><th>Kolom Berhasil Dipetakan</th><td><strong style="color: ${matchPercentage >= 80 ? '#059669' : '#d97706'};">${headerInfo.matched_columns}/${headerInfo.required_columns} (${matchPercentage}%)</strong></td></tr>`;
+                }
+                
+                if (headerInfo.header_row) {
+                    details += `<tr><th>Header Baris</th><td>${headerInfo.header_row}</td></tr>`;
+                }
+                
+                if (headerInfo.data_start_row) {
+                    details += `<tr><th>Data Mulai Baris</th><td>${headerInfo.data_start_row}</td></tr>`;
+                }
+                
+                if (headerInfo.detected_primary) {
+                    details += `<tr><th>Primary Header</th><td><strong>${headerInfo.detected_primary}</strong></td></tr>`;
+                }
+                
+                // Validation warnings count
+                if (headerInfo.validation_warnings !== undefined && headerInfo.validation_warnings > 0) {
+                    details += `<tr><th>Warning Validasi</th><td><strong style="color: #d97706;">${headerInfo.validation_warnings} peringatan</strong></td></tr>`;
+                }
+            }
+            
+            // Format periode date
+            if (data.periode_date || (data.header_info && data.header_info.periode_date)) {
+                const periodeDate = data.periode_date || data.header_info.periode_date;
+                const formattedDate = formatToIndonesianDate(periodeDate);
                 details += `<tr><th>Periode Date</th><td><strong>${formattedDate}</strong></td></tr>`;
             }
             
@@ -818,31 +1083,39 @@
                 details += `<tr><th>Upload Date</th><td><strong>${data.upload_date}</strong></td></tr>`;
             }
             
-            details += `<tr><th>Header Baris</th><td>${data.header_info.header_row}</td></tr>`;
-            details += `<tr><th>Data Mulai Baris</th><td>${data.header_info.data_start_row}</td></tr>`;
-            details += `<tr><th>Primary Header</th><td><strong>${data.header_info.detected_primary}</strong></td></tr>`;
             details += '</table>';
             
-            // PERBAIKAN: Hanya tampilkan warning untuk header yang SEHARUSNYA ada di Excel
-            // Jangan tampilkan warning untuk kolom otomatis (period_date, upload_date)
-            if (data.header_info.missing_headers && data.header_info.missing_headers.length > 0) {
-                // Filter out kolom otomatis dari missing headers
+            // Enhanced missing headers handling
+            if (data.header_info && data.header_info.missing_headers && data.header_info.missing_headers.length > 0) {
                 const automaticColumns = ['period_date', 'upload_date', 'id'];
                 const actualMissingHeaders = data.header_info.missing_headers.filter(header => 
-                    !automaticColumns.includes(header.toLowerCase())
+                    !automaticColumns.some(autoCol => autoCol.toLowerCase() === header.toLowerCase())
                 );
                 
                 if (actualMissingHeaders.length > 0) {
                     details += '<div style="margin-top: 15px; padding: 12px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 6px;">';
-                    details += '<h6 style="color: #92400e; margin-bottom: 8px;">⚠️ Header Tidak Ditemukan di File Excel:</h6>';
-                    details += '<div style="display: flex; flex-wrap: wrap; gap: 6px;">';
+                    details += '<h6 style="color: #92400e; margin-bottom: 8px;">⚠️ Kolom Tidak Ditemukan dengan Pencocokan Nama:</h6>';
+                    details += '<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;">';
                     actualMissingHeaders.forEach(header => {
                         details += `<span style="background: #fed7aa; color: #92400e; padding: 3px 6px; border-radius: 3px; font-size: 0.75rem;">${header}</span>`;
                     });
                     details += '</div>';
-                    details += '<p style="margin-top: 8px; font-size: 0.875rem; color: #92400e;">Kolom ini dilewati saat insert.</p>';
+                    details += '<p style="margin: 0; font-size: 0.875rem; color: #92400e;">Kolom ini ditangani dengan nilai default atau NULL berdasarkan konfigurasi database.</p>';
                     details += '</div>';
                 }
+            }
+            
+            // Enhanced validation warnings display
+            if (data.validation_warnings && data.validation_warnings.length > 0 && data.validation_warnings.length <= 5) {
+                details += '<div style="margin-top: 15px; padding: 12px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 6px;">';
+                details += '<h6 style="color: #92400e; margin-bottom: 8px;">⚠️ Peringatan Validasi Data:</h6>';
+                details += '<ul style="margin: 0; padding-left: 16px; font-size: 0.875rem; color: #92400e;">';
+                data.validation_warnings.forEach(warning => {
+                    details += `<li style="margin-bottom: 4px;">${formatErrorMessage(warning)}</li>`;
+                });
+                details += '</ul>';
+                details += '<p style="margin: 8px 0 0 0; font-size: 0.75rem; color: #6b7280; font-style: italic;">Data tetap berhasil diproses dengan penanganan otomatis.</p>';
+                details += '</div>';
             }
             
             return details;
@@ -851,38 +1124,82 @@
         function createErrorDetails(data) {
             let details = '<div style="margin-top: 15px;">';
             
-            if (data.found_headers && data.expected_headers) {
-                details += '<h5 style="color: #dc2626; margin-bottom: 12px;">🔍 Perbandingan Header:</h5>';
+            // Enhanced header mismatch information
+            if (data.header_info) {
+                const headerInfo = data.header_info;
                 
-                details += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">';
+                details += '<h5 style="color: #dc2626; margin-bottom: 12px;">📊 Informasi Header Matching:</h5>';
                 
-                // Found headers
-                details += '<div><h6 style="color: #6b7280; margin-bottom: 8px;">Header Ditemukan:</h6>';
-                details += '<div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px;">';
-                data.found_headers.forEach(header => {
-                    details += `<div style="padding: 2px 0; color: #dc2626; font-size: 0.875rem;">• ${header}</div>`;
-                });
-                details += '</div></div>';
+                // Statistics
+                if (headerInfo.matched_columns !== undefined && headerInfo.required_columns !== undefined) {
+                    const matchPercentage = Math.round((headerInfo.matched_columns / headerInfo.required_columns) * 100);
+                    details += `<div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 12px; margin-bottom: 15px;">`;
+                    details += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; text-align: center;">`;
+                    details += `<div><div style="font-size: 1.5rem; font-weight: bold; color: ${matchPercentage >= 50 ? '#059669' : '#dc2626'};">${headerInfo.matched_columns}</div><div style="font-size: 0.875rem; color: #6b7280;">Kolom Cocok</div></div>`;
+                    details += `<div><div style="font-size: 1.5rem; font-weight: bold; color: #dc2626;">${headerInfo.required_columns}</div><div style="font-size: 0.875rem; color: #6b7280;">Total Dibutuhkan</div></div>`;
+                    details += `<div><div style="font-size: 1.5rem; font-weight: bold; color: ${matchPercentage >= 50 ? '#059669' : '#dc2626'};">${matchPercentage}%</div><div style="font-size: 0.875rem; color: #6b7280;">Tingkat Kecocokan</div></div>`;
+                    details += `</div></div>`;
+                }
                 
-                // Expected headers
-                details += '<div><h6 style="color: #6b7280; margin-bottom: 8px;">Header Yang Diharapkan:</h6>';
-                details += '<div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px;">';
-                data.expected_headers.forEach(header => {
-                    details += `<div style="padding: 2px 0; color: #059669; font-size: 0.875rem;">• ${header}</div>`;
-                });
-                details += '</div></div>';
-                
-                details += '</div>';
+                // Detailed column comparison
+                if (headerInfo.found_headers && headerInfo.found_headers.length > 0) {
+                    details += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">';
+                    
+                    // Found headers
+                    details += '<div><h6 style="color: #6b7280; margin-bottom: 8px;">Header yang Berhasil Dipetakan:</h6>';
+                    details += '<div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px; max-height: 200px; overflow-y: auto;">';
+                    headerInfo.found_headers.forEach(header => {
+                        details += `<div style="padding: 2px 0; color: #059669; font-size: 0.875rem;">✓ ${header}</div>`;
+                    });
+                    details += '</div></div>';
+                    
+                    // Missing headers
+                    if (headerInfo.missing_headers && headerInfo.missing_headers.length > 0) {
+                        // Filter out automatic columns
+                        const automaticColumns = ['period_date', 'upload_date', 'id'];
+                        const actualMissingHeaders = headerInfo.missing_headers.filter(header => 
+                            !automaticColumns.some(autoCol => autoCol.toLowerCase() === header.toLowerCase())
+                        );
+                        
+                        if (actualMissingHeaders.length > 0) {
+                            details += '<div><h6 style="color: #6b7280; margin-bottom: 8px;">Header yang Tidak Ditemukan:</h6>';
+                            details += '<div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px; max-height: 200px; overflow-y: auto;">';
+                            actualMissingHeaders.forEach(header => {
+                                details += `<div style="padding: 2px 0; color: #dc2626; font-size: 0.875rem;">✗ ${header}</div>`;
+                            });
+                            details += '</div></div>';
+                        }
+                    }
+                    
+                    details += '</div>';
+                }
             }
             
-            if (data.suggestions && data.suggestions.length > 0) {
-                details += '<h5 style="color: #1e40af; margin-bottom: 12px;">💡 Saran Perbaikan:</h5>';
-                details += '<ul style="margin-left: 20px; color: #475569; line-height: 1.6;">';
-                data.suggestions.forEach(suggestion => {
-                    details += `<li style="margin-bottom: 8px;">${suggestion}</li>`;
-                });
-                details += '</ul>';
+            // Enhanced suggestions
+            const suggestions = [
+                'Pastikan nama kolom di Excel sesuai dengan template yang telah ditentukan',
+                'Periksa ejaan dan spasi pada header kolom',
+                'Header dapat menggunakan spasi yang akan dikonversi ke underscore secara otomatis',
+                'Gunakan fungsi "Preview Header DB" untuk melihat struktur kolom yang dibutuhkan',
+                'Pastikan sheet yang dipilih memiliki struktur data yang benar'
+            ];
+            
+            if (data.header_info && data.header_info.matched_columns !== undefined) {
+                const matchPercentage = Math.round((data.header_info.matched_columns / data.header_info.required_columns) * 100);
+                
+                if (matchPercentage < 50) {
+                    suggestions.push('Tingkat kecocokan sangat rendah - periksa apakah Anda memilih sheet dan template yang benar');
+                } else if (matchPercentage < 80) {
+                    suggestions.push('Beberapa kolom tidak cocok - sistem akan menggunakan pencocokan posisi sebagai fallback');
+                }
             }
+            
+            details += '<h5 style="color: #1e40af; margin-bottom: 12px;">💡 Saran Perbaikan:</h5>';
+            details += '<ul style="margin-left: 20px; color: #475569; line-height: 1.6;">';
+            suggestions.forEach(suggestion => {
+                details += `<li style="margin-bottom: 8px;">${suggestion}</li>`;
+            });
+            details += '</ul>';
             
             details += '</div>';
             return details;
@@ -923,6 +1240,19 @@
         function validateMonthYear(dateString) {
             // Cek format YYYY-MM
             return /^\d{4}-(0[1-9]|1[0-2])$/.test(dateString);
+        }
+
+        function formatToIndonesianDate(dateString) {
+            const monthNames = [
+                'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+                'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+            ];
+            
+            const date = new Date(dateString);
+            const monthName = monthNames[date.getMonth()];
+            const year = date.getFullYear();
+            
+            return `${monthName} ${year}`;
         }
 
         // Utility functions
