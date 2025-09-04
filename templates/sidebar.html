@@ -13,9 +13,10 @@
         <!-- Main Menu Section -->
         <div class="menu-section">
             <div class="menu-section-title">Main Menu</div>
-            
+            <a href="/data" class="menu-item {% if request.path == '/data' %}active{% endif %}">
+                Download Data
+            </a>
             <a href="/upload" class="menu-item {% if request.path == '/upload' %}active{% endif %}">
-                <div class="menu-item-icon">📤</div>
                 Upload Data
             </a>
         </div>
@@ -26,17 +27,14 @@
             <div class="menu-section-title">Admin Panel</div>
             
             <a href="/create-table" class="menu-item {% if request.path == '/create-table' %}active{% endif %}">
-                <div class="menu-item-icon">📊</div>
                 Template Management
             </a>
 
             <a href="/divisions-page" class="menu-item {% if request.path == '/divisions-page' %}active{% endif %}">
-                <div class="menu-item-icon">🏢</div>
                 Divisions Management
             </a>
 
             <a href="/users" class="menu-item {% if request.path == '/users' %}active{% endif %}">
-                <div class="menu-item-icon">👥</div>
                 Users Management
             </a>
         </div>

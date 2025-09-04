@@ -169,7 +169,7 @@ body {
 }
 
 .menu-section-title {
-    font-size: 0.75rem;
+    font-size: 0.85rem;
     font-weight: 600;
     color: var(--text-light);
     text-transform: uppercase;
@@ -187,7 +187,7 @@ body {
     text-decoration: none;
     transition: var(--transition);
     border-left: 3px solid transparent;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 500;
     position: relative;
 }

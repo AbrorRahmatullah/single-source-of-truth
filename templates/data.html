@@ -1,0 +1,237 @@
+{% extends "header.html" %}
+
+{% block title %}Data{% endblock %}
+
+{% block content %}
+
+    {% include 'sidebar.html' %}
+    <div class="main-content" id="mainContent">
+        <div class="content">
+            <div class="content-header" >
+                <h2 class="content-title">Data Bulanan SSOT</h2>
+                <p class="content-subtitle">Preview and Download Data</p>
+            </div>
+            <div class="card" style="padding: 18px 20px; background: #f8fafc; border-radius: 10px; box-shadow: 0 1px 4px #e5e7eb; margin-bottom: 18px;">
+                <div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="month" id="filterTanggalData" style="padding: 7px 12px; border: 1px solid #d1d5db; border-radius: 4px; min-width: 140px;">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="text" id="globalSearch" placeholder="🔍 Cari data..." style="padding: 7px 12px; border: 1px solid #d1d5db; border-radius: 4px; min-width: 180px;">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span>Tampilkan</span>
+                        <select id="pageSizeSelect" style="padding: 5px 10px; border-radius: 4px; border: 1px solid #d1d5db;">
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                        </select>
+                        <span>data per halaman</span>
+                    </div>
+                    <div style="font-size: 0.98rem; color: #334155; margin-left: auto;">
+                        <span id="totalRecordsInfo"></span>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button class="btn btn-success" onclick="downloadMonthlyData()">⬇ Download Excel</button>
+                    </div>
+                </div>
+            </div>
+            <div id="monthlyDataTableWrapper" style="background: #fff; border-radius: 8px; box-shadow: 0 1px 4px #e5e7eb; margin-bottom: 18px;"></div>
+            <div id="paginationControls" style="margin-bottom: 18px;"></div>
+        </div>
+    </div>
+
+    <script>
+        let monthlyData = [];
+        let originalData = [];
+        let currentPage = 1;
+        let pageSize = 50;
+        let totalRecords = 0;
+
+        function updateMonthlyDataPage() {
+            const startIdx = (currentPage - 1) * pageSize;
+            const endIdx = startIdx + pageSize;
+            monthlyData = originalData.slice(startIdx, endIdx);
+        }
+
+        function loadMonthlyData() {
+            const tanggal = document.getElementById('filterTanggalData').value;
+            let url = `/api/data?page=1&page_size=100000`;
+            if (tanggal) url += `&tanggal_data=${tanggal}`;
+            fetch(url)
+                .then(res => res.json())
+                .then(res => {
+                    if (res.success) {
+                        originalData = res.data;
+                        totalRecords = res.total;
+                        currentPage = 1;
+                        updateMonthlyDataPage();
+                        document.getElementById('totalRecordsInfo').textContent = `Total: ${totalRecords.toLocaleString()} data`;
+                        renderMonthlyTable();
+                        renderPagination();
+                    } else {
+                        document.getElementById('monthlyDataTableWrapper').innerHTML = `<div style='padding:30px;text-align:center;color:#ef4444;'>${res.message}</div>`;
+                    }
+                });
+        }
+
+        function formatMonthYear(dateStr) {
+            if (!dateStr) return '';
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return '';
+            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+            return `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+        }
+
+        function formatDateDMY(dateStr) {
+            if (!dateStr) return '';
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return '';
+            const pad = n => n < 10 ? '0'+n : n;
+            return `${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()}`;
+        }
+
+        function formatDateTime(dateStr) {
+            if (!dateStr) return '';
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return '';
+            const pad = n => n < 10 ? '0'+n : n;
+            return `${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+
+        function renderMonthlyTable() {
+            const wrapper = document.getElementById('monthlyDataTableWrapper');
+            if (!monthlyData.length) {
+                wrapper.innerHTML = '<div style="padding:30px;text-align:center;color:#64748b;">Tidak ada data</div>';
+                return;
+            }
+            // Urutan kolom
+            const columnOrder = [
+                'Tanggal_Data','Facility_No','Customer_Name','Customer_Name_SLIK','Alias','Customer_ID','Kode_Revenue','Product_Name','Sub_Product_Name','Financing_Scheme','Financing_Category_Type','Nama_Proyek','Deskripsi_Proyek','Nilai_Proyek','Klasifikasi_Proyek','Kategori_Proyek','Progress_Proyek','Lokasi_Proyek','Output_Proyek','Satuan_Output_Proyek','RM_PIC','Flag_Negative_Pledge','Flag_Clean_Basis','Golongan_Debitur','Nama_Kelompok_Debitur','Sektor','Sektor_Ekonomi_Lapangan_Usaha','Obyek_Pembiayaan','Kategori_Usaha_Keuangan_Berkelanjutan','Facility_Activation_Date','Perjanjian_Kredit_Date','Komitmen_ori','Komitmen_idr','Kelonggaran_Tarik','Availability_Period','OS_Principal','OS_IDR','Currency','Interest_Rate','Interest_Type','Interest_Reference_Rate','Maturity_Date','Start_Date_Facility','Category','Sub_Category','Divisi','Kategori_Badan_Usaha','Sub_Kategori_Badan_Usaha','Source_of_Fund','Rating_Debitur_Internal','Rating_Debitur_Eksternal','Stage','Watchlist_Flag','Flag_Restrukturisasi','Tanggal_Awal_Restru','Tanggal_Akhir_Restru','Kolektibilitas','Metode_CKPN','CKPN_Aset_Baik','CKPN_Aset_Kurang_Baik','CKPN_Aset_Tidak_Baik','CKPN','Flag_Penjaminan','Flag_Penugasan','load_date'
+            ];
+            // Batasi tinggi dan lebar, tambahkan scroll dan sort
+            let html = `<div style="max-width:100vw; overflow-x:auto;">
+                <div style="max-height:500px; overflow-y:auto;">
+                <table style="min-width:1200px;width:max-content;font-size:0.85rem;border-collapse:collapse;">
+                <thead style="background:#f1f5f9;">
+                    <tr>`;
+            columnOrder.forEach(col => {
+                const header = col.replace(/_/g, ' ');
+                let icon = '<span style="font-size:0.9em;color:#64748b;">⇅</span>';
+                if (sortState.col === col) {
+                    icon = `<span style="font-size:1em;color:#1e40af;">${sortState.asc ? '▲' : '▼'}</span>`;
+                }
+                html += `<th style="padding:10px 8px;border-bottom:2px solid #e5e7eb;text-align:left;font-weight:600;color:#334155;white-space:nowrap;cursor:pointer;user-select:none;position:sticky;top:0;z-index:2;background:#f1f5f9;" onclick="sortTableByColumn('${col}')">${header} ${icon}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            monthlyData.forEach(row => {
+                html += '<tr style="border-bottom:1px solid #e5e7eb;">';
+                columnOrder.forEach(col => {
+                    let val = row[col];
+                    // Format tanggal sesuai permintaan
+                    if (["Facility_Activation_Date","Perjanjian_Kredit_Date","Availability_Period","Maturity_Date","Start_Date_Facility","Tanggal_Awal_Restru","Tanggal_Akhir_Restru"].includes(col)) {
+                        val = formatDateDMY(val);
+                    } else if (col === "load_date" && val) {
+                        val = formatDateTime(val);
+                    } else if (col === "Tanggal_Data") {
+                        val = formatMonthYear(val);
+                    }
+                    html += `<td style="padding:8px 8px;border-right:1px solid #f3f4f6;white-space:nowrap;">${val ?? ''}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table></div></div>';
+            wrapper.innerHTML = html;
+        }
+
+        let sortState = {col: null, asc: true};
+        function sortTableByColumn(col) {
+            if (!originalData.length) return;
+            if (sortState.col === col) sortState.asc = !sortState.asc;
+            else { sortState.col = col; sortState.asc = true; }
+            originalData.sort((a, b) => {
+                let va = a[col] ?? '';
+                let vb = b[col] ?? '';
+                // Custom sort for date columns
+                if (["Facility_Activation_Date","Perjanjian_Kredit_Date","Availability_Period","Maturity_Date","Start_Date_Facility","Tanggal_Awal_Restru","Tanggal_Akhir_Restru","load_date"].includes(col)) {
+                    va = new Date(va);
+                    vb = new Date(vb);
+                    if (isNaN(va.getTime())) va = new Date('1900-01-01');
+                    if (isNaN(vb.getTime())) vb = new Date('1900-01-01');
+                }
+                if (va < vb) return sortState.asc ? -1 : 1;
+                if (va > vb) return sortState.asc ? 1 : -1;
+                return 0;
+            });
+            updateMonthlyDataPage();
+            renderMonthlyTable();
+            // Tidak perlu update icon via JS, sudah langsung di-render di header
+        }
+
+        function renderPagination() {
+            const controls = document.getElementById('paginationControls');
+            const totalPages = Math.ceil(originalData.length / pageSize);
+            controls.innerHTML = '';
+            if (totalPages > 1) {
+                controls.innerHTML = `
+                    <button class="btn btn-secondary btn-sm" ${currentPage==1?'disabled':''} onclick="currentPage--;updateMonthlyDataPage();renderMonthlyTable();renderPagination();">Prev</button>
+                    <span style="margin:0 10px;">Halaman ${currentPage} / ${totalPages}</span>
+                    <button class="btn btn-secondary btn-sm" ${currentPage==totalPages?'disabled':''} onclick="currentPage++;updateMonthlyDataPage();renderMonthlyTable();renderPagination();">Next</button>
+                `;
+            }
+        }
+
+        document.getElementById('filterTanggalData').addEventListener('change', function() {
+            currentPage = 1;
+            loadMonthlyData();
+        });
+        document.getElementById('pageSizeSelect').addEventListener('change', function() {
+            pageSize = parseInt(this.value,10);
+            currentPage = 1;
+            updateMonthlyDataPage();
+            renderMonthlyTable();
+            renderPagination();
+        });
+        document.getElementById('globalSearch').addEventListener('input', function() {
+            applyGlobalSearch();
+        });
+
+        function applyGlobalSearch() {
+            const term = document.getElementById('globalSearch').value.toLowerCase();
+            if (!term) {
+                updateMonthlyDataPage();
+            } else {
+                monthlyData = originalData.filter(row => {
+                    return Object.values(row).some(val => (val ?? '').toString().toLowerCase().includes(term));
+                });
+            }
+            renderMonthlyTable();
+            renderPagination();
+        }
+
+        function downloadMonthlyData() {
+            const tanggal = document.getElementById('filterTanggalData').value;
+            fetch('/api/download-data', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({tanggal_data: tanggal})
+            }).then(res => {
+                if (res.ok) return res.blob();
+                else return res.json().then(data => {throw new Error(data.message)});
+            }).then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'monthly_data.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            }).catch(e => alert(e.message));
+        }
+
+        window.onload = function() {
+            loadMonthlyData();
+        };
+    </script>
+{% endblock %}

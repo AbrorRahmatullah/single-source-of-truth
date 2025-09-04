@@ -3678,6 +3678,122 @@ def api_download_debitur_excel():
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
+
+@app.route('/data', methods=['GET'])
+def data_page():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    
+    return render_template(
+        'data.html',
+        username=session.get('username'),
+        fullname=session.get('fullname'),
+        division=session.get('division'),
+        role_access=session.get('role_access')
+    )
+
+@app.route('/api/data', methods=['GET'])
+def api_data():
+    """
+    Endpoint untuk datatable monthly data dengan filter tanggal, pagination, dan limit
+    Query params: tanggal_data, page, page_size
+    """
+    try:
+        tanggal_data = request.args.get('tanggal_data')
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('page_size', 50))
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Filter tanggal_data jika ada
+        where_clause = ""
+        params = []
+        if tanggal_data:
+            # Jika hanya bulan-tahun, filter dengan LIKE atau range
+            if len(tanggal_data) == 7:  # format YYYY-MM
+                where_clause = "WHERE CONVERT(VARCHAR(7), Tanggal_Data, 120) = ?"
+                params.append(tanggal_data)
+            else:
+                where_clause = "WHERE Tanggal_Data = ?"
+                params.append(tanggal_data)
+
+        # Hitung total data
+        count_query = f"SELECT COUNT(*) FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] {where_clause}"
+        cursor.execute(count_query, params)
+        total_records = cursor.fetchone()[0]
+
+        # Ambil data dengan pagination
+        offset = (page - 1) * page_size
+        data_query = f"""
+            SELECT *
+            FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY]
+            {where_clause}
+            ORDER BY Tanggal_Data DESC
+            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+        """
+        cursor.execute(data_query, params + [offset, page_size])
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+
+        data = [dict(zip(columns, row)) for row in rows]
+
+        return jsonify({
+            'success': True,
+            'data': data,
+            'total': total_records,
+            'page': page,
+            'page_size': page_size
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+        
+@app.route('/api/download-data', methods=['POST'])
+def api_download_data():
+    """
+    Download data excel sesuai filter
+    """
+    try:
+        tanggal_data = request.json.get('tanggal_data')
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        where_clause = ""
+        params = []
+        if tanggal_data:
+            # Jika hanya bulan-tahun, filter dengan LIKE atau range
+            if len(tanggal_data) == 7:  # format YYYY-MM
+                where_clause = "WHERE CONVERT(VARCHAR(7), Tanggal_Data, 120) = ?"
+                params.append(tanggal_data)
+            else:
+                where_clause = "WHERE Tanggal_Data = ?"
+                params.append(tanggal_data)
+
+        query = f"SELECT * FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] {where_clause} ORDER BY Tanggal_Data DESC"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Monthly Data"
+        ws.append(columns)
+        for row in rows:
+            ws.append(list(row))
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = "monthly_data.xlsx"
+        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=filename)
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
                         
 if __name__ == '__main__':
     app.run(debug=True)
