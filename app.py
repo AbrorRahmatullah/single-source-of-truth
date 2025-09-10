@@ -3764,7 +3764,6 @@ def api_download_data():
         where_clause = ""
         params = []
         if tanggal_data:
-            # Jika hanya bulan-tahun, filter dengan LIKE atau range
             if len(tanggal_data) == 7:  # format YYYY-MM
                 where_clause = "WHERE CONVERT(VARCHAR(7), Tanggal_Data, 120) = ?"
                 params.append(tanggal_data)
@@ -3772,23 +3771,66 @@ def api_download_data():
                 where_clause = "WHERE Tanggal_Data = ?"
                 params.append(tanggal_data)
 
-        query = f"SELECT * FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] {where_clause} ORDER BY Tanggal_Data DESC"
+        # --- Ambil data utama ---
+        query = f"""
+            SELECT * 
+            FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] 
+            {where_clause} 
+            ORDER BY Tanggal_Data DESC
+        """
         cursor.execute(query, params)
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
 
+        # --- Ambil daftar kolom numeric ---
+        cursor.execute("""
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'SSOT_FINAL_MONTHLY'
+            AND DATA_TYPE = 'numeric'
+        """)
+        numeric_columns = {row[0] for row in cursor.fetchall()}
+
+        # --- Buat Workbook ---
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Monthly Data"
+
+        # Header
         ws.append(columns)
+
+        # Data rows
         for row in rows:
             ws.append(list(row))
 
+        # Format kolom numeric agar tidak eksponen & bisa di-SUM
+        from openpyxl.styles import numbers
+        for col_idx, col_name in enumerate(columns, start=1):
+            if col_name in numeric_columns:
+                for row_idx in range(2, len(rows) + 2):  # skip header
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    cell.number_format = numbers.FORMAT_NUMBER_COMMA_SEPARATED1
+
+        # Auto adjust column width
+        for col_idx, col_name in enumerate(columns, start=1):
+            max_length = len(str(col_name))  # header length
+            for row in rows:
+                value = row[col_idx - 1]
+                if value is not None:
+                    max_length = max(max_length, len(str(value)))
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max_length + 2, 50)
+
+        # Output ke response
         output = BytesIO()
         wb.save(output)
         output.seek(0)
         filename = "monthly_data.xlsx"
-        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=filename)
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
     finally:
