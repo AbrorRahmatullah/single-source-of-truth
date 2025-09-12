@@ -18,6 +18,9 @@ from flask_bcrypt import Bcrypt
 from app.config import get_db_connection
 from io import BytesIO
 
+
+last_sync_debitur = None  # Global variable for last sync debitur
+
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
 
