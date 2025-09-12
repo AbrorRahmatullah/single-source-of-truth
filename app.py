@@ -18,9 +18,6 @@ from flask_bcrypt import Bcrypt
 from app.config import get_db_connection
 from io import BytesIO
 
-
-last_sync_debitur = None  # Global variable for last sync debitur
-
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
 
@@ -3499,15 +3496,11 @@ def save_as_template():
         return jsonify({'success': False, 'message': f'Error: {str(e)}'})
 
 @app.route('/api/debitur-aktif', methods=['GET'])
-
-
-@app.route('/api/debitur-aktif', methods=['GET'])
 def api_debitur_aktif():
     """
     GET /api/debitur-aktif
     Mengambil data debitur aktif untuk preview (max 1000 rows)
     """
-    global last_sync_debitur
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -3551,11 +3544,10 @@ def api_debitur_aktif():
         """, (last_eod_date,))
         total_records = cursor.fetchone()[0]
 
-        # Use last_sync_debitur from memory
         stats = {
             'total': total_records,
             'active': total_records,
-            'last_update': last_sync_debitur if last_sync_debitur else 'never'
+            'last_update': last_eod_date.strftime('%Y-%m-%d') if last_eod_date else None
         }
 
         return jsonify({'success': True, 'data': data, 'stats': stats})
@@ -3572,7 +3564,6 @@ def api_sync_debitur():
     POST /api/sync-debitur
     Refresh data debitur aktif dari database
     """
-    global last_sync_debitur
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -3608,20 +3599,45 @@ def api_sync_debitur():
                 'last_update': row[0].strftime('%Y-%m-%d') if row[0] else None,
             })
 
-        # Update last_sync_debitur in server memory
-        if last_eod_date:
-            last_sync_debitur = last_eod_date.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            last_sync_debitur = None
-
         stats = {
             'total': len(data),
             'active': len(data),
-            'last_update': last_sync_debitur if last_sync_debitur else 'never'
+            'last_update': last_eod_date.strftime('%Y-%m-%d') if last_eod_date else None
         }
+        
+        cursor.execute("""
+            MERGE INTO SSOT_LAST_SYNC AS target
+            USING (SELECT ? AS sync_type) AS source
+            ON target.sync_type = source.sync_type
+            WHEN MATCHED THEN
+                UPDATE SET last_sync_time = GETDATE()
+            WHEN NOT MATCHED THEN
+                INSERT (sync_type, last_sync_time) VALUES (source.sync_type, GETDATE());
+        """, ('debitur_aktif',))
+        conn.commit()
 
         return jsonify({'success': True, 'data': data, 'stats': stats})
 
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+        
+@app.route('/api/last-sync', methods=['GET'])
+def api_last_sync():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT TOP 1 last_sync_time
+            FROM SSOT_LAST_SYNC
+            WHERE sync_type = 'debitur_aktif'
+            ORDER BY last_sync_time DESC
+        """)
+        row = cursor.fetchone()
+        last_sync = row[0].strftime('%Y-%m-%d %H:%M:%S') if row and row[0] else None
+        return jsonify({'success': True, 'last_sync': last_sync})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
     finally:

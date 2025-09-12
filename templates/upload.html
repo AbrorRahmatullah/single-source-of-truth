@@ -1434,6 +1434,8 @@
             const statusFilter = document.getElementById('statusFilter');
             const pageSizeSelect = document.getElementById('pageSizeSelect');
 
+            updateLastSyncInfo();
+
             if (periodeInput) {
                 periodeInput.addEventListener('change', function() {
                     const dateValue = this.value;
@@ -1464,6 +1466,7 @@
         function showDebiturModal() {
             const modal = document.getElementById('debiturModal');
             modal.style.display = 'block';
+            updateLastSyncInfo(); // Pastikan last sync diupdate setiap kali modal dibuka
             loadDebiturData();
         }
 
@@ -1474,17 +1477,25 @@
         function loadDebiturData() {
             showDebiturLoading(true);
             hideAllContent();
+            
             fetch('/api/debitur-aktif')
             .then(response => response.json())
             .then(result => {
                 showDebiturLoading(false);
+                
                 if (result.success) {
                     debiturData = result.data || [];
-                    filteredDebiturData = debiturData;
-                    enableDownloadButton();
-                    updateLastSyncInfo(result.stats?.last_update);
-                    showMainContent();
+                    
+                    if (debiturData.length === 0) {
+                        showEmptyState();
+                        return;
+                    }
+                    
+                    filteredDebiturData = [...debiturData];
                     populateDebiturTable(filteredDebiturData);
+                    showMainContent();
+                    updateLastSyncInfo();
+                    enableDownloadButton();
                 } else {
                     showErrorState();
                 }
@@ -1516,21 +1527,32 @@
                 syncText.textContent = 'Refresh Data';
                 
                 showDebiturLoading(false);
+                updateLastSyncInfo();
                 
                 if (result.success) {
                     debiturData = result.data || [];
-                    filteredDebiturData = debiturData;
-                    enableDownloadButton();
-                    updateLastSyncInfo(result.stats?.last_update);
-                    showMainContent();
+                    
+                    if (debiturData.length === 0) {
+                        showEmptyState();
+                        showAlert('info', 'Data berhasil direfresh, namun tidak ada debitur aktif ditemukan.');
+                        return;
+                    }
+                    
+                    filteredDebiturData = [...debiturData];
                     populateDebiturTable(filteredDebiturData);
+                    showMainContent();
+                    updateLastSyncInfo();
+                    enableDownloadButton();
+                    
                     showAlert('success', `Data berhasil direfresh! Ditemukan ${result.stats?.total || 0} debitur aktif.`);
                 } else {
                     showErrorState();
+                    showAlert('error', result.message || 'Gagal melakukan refresh data');
                 }
             })
             .catch(error => {
                 console.error('Error syncing debitur data:', error);
+                showAlert('error', 'Terjadi kesalahan saat refresh data');
                 
                 // Reset button state
                 syncIcon.innerHTML = '🔄';
@@ -1663,8 +1685,6 @@
             downloadBtn.disabled = true;
         }
 
-
-
         function populateDebiturTable(data) {
             const tbody = document.getElementById('debiturTableBody');
             const recordCount = document.getElementById('recordCount');
@@ -1733,15 +1753,20 @@
             }
         }
 
-        function updateLastSyncInfo(lastSync) {
-            const lastSyncElement = document.getElementById('lastSyncInfo');
-            let display = '-';
-            if (lastSync && lastSync !== 'never') {
-                display = formatDateTime(lastSync);
-            } else if (lastSync === 'never') {
-                display = 'Never';
-            }
-            lastSyncElement.innerHTML = `<span>Last sync: ${display}</span>`;
+        function updateLastSyncInfo() {
+            fetch('/api/last-sync')
+                .then(response => response.json())
+                .then(result => {
+                    const lastSyncElement = document.getElementById('lastSyncInfo');
+                    if (result.success && result.last_sync) {
+                        lastSyncElement.innerHTML = `<span>Last sync: ${result.last_sync}</span>`;
+                    } else {
+                        lastSyncElement.innerHTML = `<span>Last sync: never</span>`;
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('lastSyncInfo').innerHTML = `<span>Last sync: never</span>`;
+                });
         }
 
         function formatDateTime(dateString) {
@@ -1771,7 +1796,6 @@
 
             currentPage = 1; // Reset ke halaman pertama saat filter berubah
             populateDebiturTable(filteredDebiturData);
-            updateDebiturStats({ total: debiturData.length });
         }
 
         // Close modal when clicking outside
