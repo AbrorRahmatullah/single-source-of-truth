@@ -3496,11 +3496,15 @@ def save_as_template():
         return jsonify({'success': False, 'message': f'Error: {str(e)}'})
 
 @app.route('/api/debitur-aktif', methods=['GET'])
+
+
+@app.route('/api/debitur-aktif', methods=['GET'])
 def api_debitur_aktif():
     """
     GET /api/debitur-aktif
     Mengambil data debitur aktif untuk preview (max 1000 rows)
     """
+    global last_sync_debitur
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -3544,10 +3548,11 @@ def api_debitur_aktif():
         """, (last_eod_date,))
         total_records = cursor.fetchone()[0]
 
+        # Use last_sync_debitur from memory
         stats = {
             'total': total_records,
             'active': total_records,
-            'last_update': last_eod_date.strftime('%Y-%m-%d') if last_eod_date else None
+            'last_update': last_sync_debitur if last_sync_debitur else 'never'
         }
 
         return jsonify({'success': True, 'data': data, 'stats': stats})
@@ -3564,6 +3569,7 @@ def api_sync_debitur():
     POST /api/sync-debitur
     Refresh data debitur aktif dari database
     """
+    global last_sync_debitur
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -3599,10 +3605,16 @@ def api_sync_debitur():
                 'last_update': row[0].strftime('%Y-%m-%d') if row[0] else None,
             })
 
+        # Update last_sync_debitur in server memory
+        if last_eod_date:
+            last_sync_debitur = last_eod_date.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            last_sync_debitur = None
+
         stats = {
             'total': len(data),
             'active': len(data),
-            'last_update': last_eod_date.strftime('%Y-%m-%d') if last_eod_date else None
+            'last_update': last_sync_debitur if last_sync_debitur else 'never'
         }
 
         return jsonify({'success': True, 'data': data, 'stats': stats})
