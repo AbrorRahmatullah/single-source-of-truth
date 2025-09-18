@@ -3979,7 +3979,7 @@ def api_download_data():
         output = BytesIO()
         wb.save(output)
         output.seek(0)
-        filename = "monthly_data.xlsx"
+        filename = f"monthly_data_{tanggal_data}.xlsx"
         
         insert_audit_trail('download_monthly_data', f"User '{session.get('username')}' downloaded monthly data Excel file.")
         return send_file(
