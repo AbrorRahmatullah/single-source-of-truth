@@ -25,7 +25,10 @@
          {% if session.role_access == 'admin' %}
         <div class="menu-section">
             <div class="menu-section-title">Admin Panel</div>
-            
+            <a href="/summary" class="menu-item {% if request.path == '/summary' %}active{% endif %}">
+                Dashboard Summary
+            </a>
+
             <a href="/create-table" class="menu-item {% if request.path == '/create-table' %}active{% endif %}">
                 Template Management
             </a>
@@ -36,6 +39,10 @@
 
             <a href="/users" class="menu-item {% if request.path == '/users' %}active{% endif %}">
                 Users Management
+            </a>
+
+            <a href="/audit-trails" class="menu-item {% if request.path == '/audit-trails' %}active{% endif %}">
+                Audit Trails
             </a>
         </div>
         {% endif %}

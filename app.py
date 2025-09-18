@@ -15,7 +15,8 @@ from waitress import serve
 from werkzeug.utils import secure_filename
 from datetime import datetime, time, date, timedelta
 from flask_bcrypt import Bcrypt
-from app.config import get_db_connection
+from config.config import get_db_connection
+from openpyxl import Workbook
 from io import BytesIO
 
 app = Flask(__name__)
@@ -54,6 +55,38 @@ def check_idle_timeout():
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ['xlsx', 'xls']
+
+# --- Audit Trail Helper ---
+def insert_audit_trail(action, deskripsi=None):
+    """
+    Insert a record into SSOT_AUDIT_TRAILS table.
+    action: string (e.g., 'login', 'logout', 'create', 'update', 'delete', 'upload', etc.)
+    deskripsi: string (optional, description of the action)
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        changed_by = session.get('username', 'anonymous')
+        ip_address = request.remote_addr if request else None
+        query = '''
+            INSERT INTO SSOT_AUDIT_TRAILS (changed_by, action, deskripsi, ip_address)
+            VALUES (?, ?, ?, ?)
+        '''
+        cursor.execute(query, (changed_by, action, deskripsi, ip_address))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"Failed to insert audit trail: {e}")
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+        except:
+            pass
+        try:
+            if conn:
+                conn.close()
+        except:
+            pass
 
 def normalize_column_name(col_name):
     """Normalize column name for comparison"""
@@ -1516,8 +1549,10 @@ def login():
             session['fullname'] = user[3]
             session['role_access'] = user[1]
             session['upload_done'] = True
+            insert_audit_trail('login', f"User '{session.get('username')}' logged in.")
             return redirect(url_for('upload_file'))
         
+        insert_audit_trail('failed_login', f"Failed login attempt for username '{username}'.")
         flash("Invalid username or password.")
 
     return render_template('login.html')
@@ -1537,6 +1572,7 @@ def change_password():
     division = session.get('division')
     
     if request.method == 'GET':
+        insert_audit_trail('view_change_password', f"User '{session.get('username')}' viewed change password page.")
         return render_template(
             'change_password.html',
             username=username,
@@ -1602,7 +1638,7 @@ def change_password():
             new_password_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
             cur.execute("UPDATE MasterUsers SET password_hash = ? WHERE username = ?", (new_password_hash, username))
             conn.commit()
-            
+            insert_audit_trail('change_password', f"User '{session.get('username')}' changed password.")
             return '''
                 <script>
                     alert("Perubahan password berhasil dilakukan.");
@@ -1613,6 +1649,7 @@ def change_password():
 # Logout Route
 @app.route('/logout')
 def logout():
+    insert_audit_trail('logout', f"User '{session.get('username')}' logged out.")
     session.pop('username', None)
     flash("You have been logged out.")
     return redirect(url_for('login'))
@@ -1650,6 +1687,7 @@ def upload_file():
             # Hanya ambil table yang masuk allowed_tables
             template_tables = [tbl for tbl in template_tables if tbl in allowed_tables]
         
+        insert_audit_trail('view_upload', f"User '{session.get('username')}' viewed upload page.")
         # Tampilkan halaman upload dengan data tabel template
         return render_template(
             'upload.html',
@@ -1723,11 +1761,13 @@ def upload_file():
                     print(f"  {col}: {type(val).__name__} = {repr(val)}")
                 
                 insert_success = safe_insert_single_record('MasterUploader', columns, values)
+                insert_audit_trail('upload', f"User '{session.get('username')}' uploaded file '{filename}'.")
                 
                 if not insert_success:
                     logger.warning("Failed to insert to MasterUploader, but continuing with main process")
                     
             except Exception as e:
+                insert_audit_trail('upload_failed', f"User '{session.get('username')}' failed to upload file '{filename}': {str(e)}")
                 logger.error(f"Gagal insert ke MasterUploader: {str(e)}")
                 # Don't fail the entire process if MasterUploader insert fails
                 logger.warning("Continuing with main process despite MasterUploader insert failure")
@@ -1764,6 +1804,7 @@ def preview_headers(table_name):
             }
         
         data_counts = get_data_count_by_period(table_name)
+        insert_audit_trail('preview_data', f"User '{session.get('username')}' preview data.")
         
         return jsonify({
             'success': True,
@@ -1863,7 +1904,7 @@ def analyze_excel():
                     'sheet_used': sheet_used
                 }
             }
-            
+            insert_audit_trail('analyze_excel', f"User '{session.get('username')}' analyze excel.")
         finally:
             # Hapus file temporary
             try:
@@ -1882,6 +1923,8 @@ def get_template_tables_endpoint():
     """Endpoint untuk mendapatkan daftar tabel template"""
     try:
         tables = get_template_tables()
+        # insert_audit_trail('get_template_tables', f"User '{session.get('username')}' get template tables.")
+        
         return jsonify({
             'success': True, 
             'tables': tables,
@@ -1904,6 +1947,7 @@ def create_table():
     divisions = get_master_divisions_tables()
     
     if request.method == 'GET':
+        insert_audit_trail('view_create_table', f"User '{session.get('username')}' viewed create table page.")
         return render_template(
             'create_table.html',
             username=username,
@@ -2161,6 +2205,7 @@ def create_table():
                 # Commit hanya jika verifikasi berhasil
                 conn.commit()
                 logger.info(f"Template {table_name} created and verified successfully with {column_count} columns")
+                insert_audit_trail('create_table', f"User '{session.get('username')}' created table '{table_name}'.")
                 
                 return jsonify({
                     'success': True,
@@ -2198,6 +2243,7 @@ def create_table():
                 except:
                     pass
             logger.error(f"Error creating table: {str(e)}")
+            insert_audit_trail('create_table_failed', f"User '{session.get('username')}' failed to create table '{table_name}': {str(e)}")
             return jsonify({'success': False, 'message': f'Error: {str(e)}'})
         finally:
             if cursor:
@@ -2307,7 +2353,9 @@ def get_template_details(template_name):
             'user_columns': len([c for c in columns if c['name'] not in ['id', 'period_date', 'upload_date']]),
             'columns': columns
         }
-        
+
+        insert_audit_trail('get_template_details', f"User '{session.get('username')}' accessed template details for '{template_name}'.")
+
         return jsonify({
             'success': True,
             'template': template_details
@@ -2367,6 +2415,7 @@ def delete_table():
                     logger.info(f"Dropped table {table_name}")
                 
                 conn.commit()
+                insert_audit_trail('delete_table', f"User '{session.get('username')}' deleted table '{table_name}'.")
                 return jsonify({
                     'success': True, 
                     'message': f'Template "{table_name}" berhasil dihapus'
@@ -2383,12 +2432,14 @@ def delete_table():
                 if table_exists:
                     cursor.execute(f"DROP TABLE [{table_name}]")
                     conn.commit()
+                    insert_audit_trail('delete_table', f"User '{session.get('username')}' deleted table '{table_name}'.")
                     logger.info(f"Dropped table {table_name}")
                     return jsonify({
                         'success': True, 
                         'message': f'Table "{table_name}" berhasil dihapus'
                     })
                 else:
+                    insert_audit_trail('delete_table_failed', f"User '{session.get('username')}' attempted to delete non-existent table '{table_name}'.")
                     return jsonify({
                         'success': False, 
                         'message': f'Table "{table_name}" not found'
@@ -2419,6 +2470,7 @@ def handle_users():
     if request.method == 'GET':
         # Jika browser meminta HTML (bukan fetch/ajax)
         if request.headers.get('Accept', '').startswith('text/html'):
+            insert_audit_trail('view_users_page', f"User '{session.get('username')}' viewed users management page.")
             return render_template(
                 'users_management.html',
                 username=session.get('username'),
@@ -2442,6 +2494,7 @@ def handle_users():
             rows = cursor.fetchall()
             columns = [column[0] for column in cursor.description]
             users = [dict(zip(columns, row)) for row in rows]
+            insert_audit_trail('view_users', f"User '{session.get('username')}' viewed user list.")
 
             return jsonify({'success': True, 'users': users})
 
@@ -2492,12 +2545,14 @@ def handle_users():
             """, (username, password_hash, role_access, fullname, email, division, created_date))
 
             conn.commit()
+            insert_audit_trail('create_user', f"User '{session.get('username')}' created new user '{username}'.")
             return jsonify({
                 'success': True, 
                 'message': f'User "{username}" created successfully.'
                 })
 
         except Exception as e:
+            insert_audit_trail('create_user_failed', f"User '{session.get('username')}' failed to create new user '{username}': {str(e)}")
             return jsonify({'success': False, 'message': str(e)})
 
         finally:
@@ -2519,8 +2574,10 @@ def get_user_by_id(id):
         if not row:
             return jsonify({'success': False, 'message': 'User not found'})
         user = dict(zip([desc[0] for desc in cur.description], row))
+        insert_audit_trail('get_user', f"User '{session.get('username')}' accessed details for user ID {id}.")
         return jsonify({'success': True, 'user': user})
     except Exception as e:
+        insert_audit_trail('get_user_failed', f"User '{session.get('username')}' failed to access details for user ID {id}: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         cur.close()
@@ -2531,7 +2588,8 @@ def update_user(id):
     if 'username' not in session:
         flash('Please log in first.')
         return redirect(url_for('login'))
-
+    insert_audit_trail('view_edit_user', f"User '{session.get('username')}' viewed edit page for user ID {id}.")
+    
     try:
         data = request.get_json()
 
@@ -2569,12 +2627,14 @@ def update_user(id):
         """, (username, fullname, email, division, role_access, id))
 
         conn.commit()
+        insert_audit_trail('update_user', f"User '{session.get('username')}' updated user ID {id}.")
         return jsonify({
             'success': True, 
             'message': f'User "{username}" updated successfully'
         })
 
     except Exception as e:
+        insert_audit_trail('update_user_failed', f"User '{session.get('username')}' failed to update user ID {id}: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         if cursor:
@@ -2587,7 +2647,8 @@ def delete_user(id):
     if 'username' not in session:
         flash('Please log in first.')
         return redirect(url_for('login'))
-
+    insert_audit_trail('view_delete_user', f"User '{session.get('username')}' viewed delete page for user ID {id}.")
+    
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -2605,9 +2666,11 @@ def delete_user(id):
         cursor.execute("DELETE FROM MasterUsers WHERE id = ?", (id,))
         conn.commit()
         
+        insert_audit_trail('delete_user', f"User '{session.get('username')}' deleted user id {id}.")
         return jsonify({'success': True, 'message': f'User: "{username}" deleted successfully'})
         
     except Exception as e:
+        insert_audit_trail('delete_user_failed', f"User '{session.get('username')}' failed to delete user id {id}: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         if cursor:
@@ -2640,7 +2703,7 @@ def check_username():
             cursor.execute("SELECT id FROM MasterUsers WHERE username = ?", (username,))
         
         exists = cursor.fetchone() is not None
-        
+        insert_audit_trail('check_username', f"User '{session.get('username')}' checked username availability for '{username}'.")
         return jsonify({
             'success': True,
             'exists': exists,
@@ -2679,7 +2742,7 @@ def check_email():
             cursor.execute("SELECT id FROM MasterUsers WHERE email = ?", (email,))
         
         exists = cursor.fetchone() is not None
-        
+        insert_audit_trail('check_email', f"User '{session.get('username')}' checked email availability for '{email}'.")
         return jsonify({
             'success': True,
             'exists': exists,
@@ -2700,7 +2763,8 @@ def divisions_page():
     if 'username' not in session:
         flash('Please log in first.')
         return redirect(url_for('login'))
-
+    insert_audit_trail('view_divisions', f"User '{session.get('username')}' viewed divisions management page.")
+    
     return render_template(
         'divisions_management.html',
         username=session.get('username'),
@@ -2725,10 +2789,12 @@ def get_divisions():
         rows = cursor.fetchall()
         columns = [column[0] for column in cursor.description]
         divisions = [dict(zip(columns, row)) for row in rows]
-
+        
+        insert_audit_trail('view_divisions', f"User '{session.get('username')}' viewed division list.")
         return jsonify({'success': True, 'divisions': divisions})
         
     except Exception as e:
+        insert_audit_trail('view_divisions_failed', f"User '{session.get('username')}' failed to view division list: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         if cursor:
@@ -2746,10 +2812,11 @@ def get_divisions_dropdown():
         cursor.execute("SELECT division_name FROM MasterDivisions WHERE division_name IS NOT NULL ORDER BY division_name")
         rows = cursor.fetchall()
         divisions = [r[0] for r in rows]
-        
+        insert_audit_trail('get_divisions_dropdown', f"User '{session.get('username')}' accessed divisions dropdown.")
         return jsonify({'success': True, 'divisions': divisions})
         
     except Exception as e:
+        insert_audit_trail('get_divisions_dropdown_failed', f"User '{session.get('username')}' failed to access divisions dropdown: {str(e)}")
         print(f"Error in get_divisions_dropdown: {str(e)}")
         return jsonify({'success': False, 'message': f'Failed to load divisions: {str(e)}'})
     
@@ -2763,7 +2830,8 @@ def get_divisions_dropdown():
 def create_division():
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first'})
-
+    insert_audit_trail('view_create_division', f"User '{session.get('username')}' viewed create division page.")
+    
     conn = None
     cursor = None
     
@@ -2798,7 +2866,7 @@ def create_division():
         """, (division_name, created_by))
         
         conn.commit()
-        
+        insert_audit_trail('create_division', f"User '{session.get('username')}' created division '{division_name}'.")
         # Log successful creation
         logger.info(f"Division '{division_name}' created successfully by {created_by}")
         
@@ -2815,6 +2883,7 @@ def create_division():
             except:
                 pass
         logger.error(f"Error creating division: {str(e)}")
+        insert_audit_trail('create_division_failed', f"User '{session.get('username')}' failed to create division '{division_name}': {str(e)}")
         return jsonify({'success': False, 'message': f'Terjadi kesalahan: {str(e)}'})
         
     finally:
@@ -2827,7 +2896,8 @@ def create_division():
 def delete_division(division_id):
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first'})
-
+    insert_audit_trail('view_delete_division', f"User '{session.get('username')}' viewed delete division page for ID {division_id}.")
+    
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -2840,14 +2910,15 @@ def delete_division(division_id):
             return jsonify({'success': False, 'message': 'Division not found'})
         
         division_name = result[0]
+        insert_audit_trail('delete_division', f"User '{session.get('username')}' deleted division '{division_name}'.")
         
         # Delete the division
         cursor.execute("DELETE FROM MasterDivisions WHERE id = ?", (division_id,))
         conn.commit()
-        
         return jsonify({'success': True, 'message': f'Division "{division_name}" deleted successfully'})
         
     except Exception as e:
+        insert_audit_trail('delete_division_failed', f"User '{session.get('username')}' failed to delete division ID {division_id}: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         if cursor:
@@ -2879,9 +2950,12 @@ def check_period():
         query = f"SELECT COUNT(*) FROM {table_name} WHERE period_date = ?"
         cursor.execute(query, (periode_date,))
         count = cursor.fetchone()[0]
+        
+        insert_audit_trail('check_period', f"User '{session.get('username')}' checked period '{periode_date}' in table '{table_name}'.")
         return jsonify({'success': True, 'exists': count > 0})
 
     except Exception as e:
+        insert_audit_trail('check_period_failed', f"User '{session.get('username')}' failed to check period in table '{table_name}': {str(e)}")
         return jsonify({'success': False, 'message': f'Error checking period: {str(e)}'})
 
     finally:
@@ -2921,7 +2995,7 @@ def check_table_exists(table_name):
         
         # Gunakan hasil yang paling konservatif (jika salah satu mengatakan ada, maka ada)
         final_exists = exists or exists_info_schema
-        
+        insert_audit_trail('check_table_exists', f"User '{session.get('username')}' checked existence of table '{table_name}'.")
         return jsonify({
             'success': True,
             'exists': final_exists,
@@ -2929,6 +3003,7 @@ def check_table_exists(table_name):
         })
         
     except Exception as e:
+        insert_audit_trail('check_table_exists_failed', f"User '{session.get('username')}' failed to check existence of table '{table_name}': {str(e)}")
         logger.error(f"Error checking table existence: {str(e)}")
         return jsonify({'success': False, 'message': f'Error: {str(e)}'})
     finally:
@@ -2997,6 +3072,7 @@ def get_existing_tables():
             tables.append(table_data)
             logger.debug(f"Added template: {table_data}")
 
+        insert_audit_trail('get_existing_tables', f"User '{session.get('username')}' accessed existing tables list.")
         return jsonify({
             'success': True, 
             'tables': tables,
@@ -3004,6 +3080,7 @@ def get_existing_tables():
         })
 
     except Exception as e:
+        insert_audit_trail('get_existing_tables_failed', f"User '{session.get('username')}' failed to access existing tables list: {str(e)}")
         logger.error(f"Error getting existing tables: {str(e)}")
         return jsonify({
             'success': False, 
@@ -3072,6 +3149,7 @@ def get_table_details(table_name):
                 'nullable': is_nullable
             })
         
+        insert_audit_trail('get_table_details', f"User '{session.get('username')}' accessed table details for '{table_name}'.")
         return jsonify({
             'success': True,
             'table': {
@@ -3081,6 +3159,7 @@ def get_table_details(table_name):
         })
         
     except Exception as e:
+        insert_audit_trail('get_table_details_failed', f"User '{session.get('username')}' failed to access table details for '{table_name}': {str(e)}")
         logger.error(f"Error fetching table details for {table_name}: {str(e)}")
         return jsonify({
             'success': False,
@@ -3144,6 +3223,7 @@ def get_table_data(table_name):
                     row_data[column] = value
             data.append(row_data)
         
+        insert_audit_trail('get_table_data', f"User '{session.get('username')}' accessed data from table '{table_name}', page {page}.")
         return jsonify({
             'success': True,
             'data': data,
@@ -3155,6 +3235,7 @@ def get_table_data(table_name):
         })
         
     except Exception as e:
+        insert_audit_trail('get_table_data_failed', f"User '{session.get('username')}' failed to access data from table '{table_name}': {str(e)}")
         logger.error(f"Error fetching table data for {table_name}: {str(e)}")
         return jsonify({
             'success': False,
@@ -3236,6 +3317,7 @@ def get_excel_sheets_endpoint():
             if sheets is None:
                 return jsonify({'success': False, 'message': 'Gagal membaca daftar sheet dari file Excel'})
             
+            insert_audit_trail('get_excel_sheets', f"User '{session.get('username')}' uploaded file '{filename}' and retrieved sheets.")
             return jsonify({
                 'success': True,
                 'sheets': sheets,
@@ -3250,6 +3332,7 @@ def get_excel_sheets_endpoint():
                 pass
         
     except Exception as e:
+        insert_audit_trail('get_excel_sheets_failed', f"User '{session.get('username')}' failed to retrieve sheets from uploaded file: {str(e)}")
         logger.error(f"Error in get_excel_sheets: {str(e)}")
         return jsonify({'success': False, 'message': f'Error: {str(e)}'})
 
@@ -3258,6 +3341,7 @@ def export_table(table_name):
     """Export table data to CSV"""
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first'})
+    insert_audit_trail('view_export_table', f"User '{session.get('username')}' viewed export page for table '{table_name}'.")
     
     conn = None
     cursor = None
@@ -3305,9 +3389,11 @@ def export_table(table_name):
         response.headers["Content-Disposition"] = f"attachment; filename={table_name}_export.csv"
         response.headers["Content-Type"] = "text/csv"
         
+        insert_audit_trail('export_table', f"User '{session.get('username')}' exported data from table '{table_name}'.")
         return response
         
     except Exception as e:
+        insert_audit_trail('export_table_failed', f"User '{session.get('username')}' failed to export data from table '{table_name}': {str(e)}")
         logger.error(f"Error exporting table {table_name}: {str(e)}")
         return jsonify({
             'success': False,
@@ -3410,6 +3496,7 @@ def duplicate_table(table_name):
         cursor.execute(create_query)
         conn.commit()
         
+        insert_audit_trail('duplicate_table', f"User '{session.get('username')}' duplicated table '{table_name}' to '{new_table_name}'.")
         return jsonify({
             'success': True,
             'message': f'Table "{new_table_name}" created successfully as duplicate of "{table_name}"',
@@ -3422,6 +3509,8 @@ def duplicate_table(table_name):
                 conn.rollback()
             except:
                 pass
+        
+        insert_audit_trail('duplicate_table_failed', f"User '{session.get('username')}' failed to duplicate table '{table_name}': {str(e)}")
         logger.error(f"Error duplicating table: {str(e)}")
         return jsonify({
             'success': False,
@@ -3437,6 +3526,7 @@ def duplicate_table(table_name):
 def save_as_template():
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Not authenticated'})
+    insert_audit_trail('view_save_as_template', f"User '{session.get('username')}' viewed save as template page.")
     
     try:
         data = request.get_json()
@@ -3478,12 +3568,14 @@ def save_as_template():
             conn.commit()
             logger.info(f"Template {table_name} saved successfully")
             
+            insert_audit_trail('save_as_template', f"User '{username}' saved new template '{table_name}' for division '{division}'.")
             return jsonify({
                 'success': True,
                 'message': f'Template "{table_name}" saved successfully'
             })
             
         except Exception as e:
+            insert_audit_trail('save_as_template_failed', f"User '{username}' failed to save template '{table_name}': {str(e)}")
             conn.rollback()
             logger.error(f"Error saving template {table_name}: {str(e)}")
             return jsonify({'success': False, 'message': f'Error saving template: {str(e)}'})
@@ -3501,6 +3593,9 @@ def api_debitur_aktif():
     GET /api/debitur-aktif
     Mengambil data debitur aktif untuk preview (max 1000 rows)
     """
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+    
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -3549,10 +3644,12 @@ def api_debitur_aktif():
             'active': total_records,
             'last_update': last_eod_date.strftime('%Y-%m-%d') if last_eod_date else None
         }
-
+        
+        insert_audit_trail('view_debitur_aktif', f"User '{session.get('username')}' viewed debitur aktif preview.")
         return jsonify({'success': True, 'data': data, 'stats': stats})
 
     except Exception as e:
+        insert_audit_trail('view_debitur_aktif_failed', f"User '{session.get('username')}' failed to view debitur aktif preview: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         if cursor: cursor.close()
@@ -3564,6 +3661,10 @@ def api_sync_debitur():
     POST /api/sync-debitur
     Refresh data debitur aktif dari database
     """
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+    # insert_audit_trail('view_sync_debitur', f"User '{session.get('username')}' viewed sync debitur aktif page.")
+    
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -3615,10 +3716,12 @@ def api_sync_debitur():
                 INSERT (sync_type, last_sync_time) VALUES (source.sync_type, GETDATE());
         """, ('debitur_aktif',))
         conn.commit()
-
+        
+        # insert_audit_trail('sync_debitur_aktif', f"User '{session.get('username')}' synchronized debitur aktif data.")
         return jsonify({'success': True, 'data': data, 'stats': stats})
 
     except Exception as e:
+        # insert_audit_trail('sync_debitur_aktif_failed', f"User '{session.get('username')}' failed to synchronize debitur aktif data: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         if cursor: cursor.close()
@@ -3637,8 +3740,11 @@ def api_last_sync():
         """)
         row = cursor.fetchone()
         last_sync = row[0].strftime('%Y-%m-%d %H:%M:%S') if row and row[0] else None
+        
+        # insert_audit_trail('view_last_sync', f"User '{session.get('username')}' viewed last sync time for debitur aktif.")
         return jsonify({'success': True, 'last_sync': last_sync})
     except Exception as e:
+        # insert_audit_trail('view_last_sync_failed', f"User '{session.get('username')}' failed to view last sync time for debitur aktif: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         if cursor: cursor.close()
@@ -3650,6 +3756,10 @@ def api_download_debitur_excel():
     POST /api/download-debitur-excel
     Generate dan download file Excel debitur aktif
     """
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+    # insert_audit_trail('view_download_debitur_excel', f"User '{session.get('username')}' viewed download debitur aktif Excel page.")
+    
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -3696,7 +3806,8 @@ def api_download_debitur_excel():
         output.seek(0)
 
         filename = f"debitur_aktif_{last_eod_date.strftime('%Y%m%d')}.xlsx" if last_eod_date else "debitur_aktif.xlsx"
-
+        # insert_audit_trail('download_debitur_excel', f"User '{session.get('username')}' downloaded debitur aktif Excel file.")
+        
         return send_file(
             output,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -3705,6 +3816,7 @@ def api_download_debitur_excel():
         )
 
     except Exception as e:
+        # insert_audit_trail('download_debitur_excel_failed', f"User '{session.get('username')}' failed to download debitur aktif Excel file: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         if cursor: cursor.close()
@@ -3714,6 +3826,8 @@ def api_download_debitur_excel():
 def data_page():
     if 'username' not in session:
         return redirect(url_for('login'))
+    
+    insert_audit_trail('view_data_page', f"User '{session.get('username')}' accessed data page.")
     
     return render_template(
         'data.html',
@@ -3729,6 +3843,10 @@ def api_data():
     Endpoint untuk datatable monthly data dengan filter tanggal, pagination, dan limit
     Query params: tanggal_data, page, page_size
     """
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+    # insert_audit_trail('view_monthly_data', f"User '{session.get('username')}' accessed monthly data API.")
+    
     try:
         tanggal_data = request.args.get('tanggal_data')
         page = int(request.args.get('page', 1))
@@ -3768,7 +3886,8 @@ def api_data():
         columns = [desc[0] for desc in cursor.description]
 
         data = [dict(zip(columns, row)) for row in rows]
-
+        
+        insert_audit_trail('view_monthly_data', f"User '{session.get('username')}' viewed monthly data, page {page}.")
         return jsonify({
             'success': True,
             'data': data,
@@ -3777,6 +3896,7 @@ def api_data():
             'page_size': page_size
         })
     except Exception as e:
+        insert_audit_trail('view_monthly_data_failed', f"User '{session.get('username')}' failed to access monthly data API: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
     finally:
         if cursor: cursor.close()
@@ -3787,6 +3907,10 @@ def api_download_data():
     """
     Download data excel sesuai filter
     """
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+    # insert_audit_trail('view_download_monthly_data', f"User '{session.get('username')}' accessed download monthly data Excel page.")
+    
     try:
         tanggal_data = request.json.get('tanggal_data')
         conn = get_db_connection()
@@ -3856,6 +3980,8 @@ def api_download_data():
         wb.save(output)
         output.seek(0)
         filename = "monthly_data.xlsx"
+        
+        insert_audit_trail('download_monthly_data', f"User '{session.get('username')}' downloaded monthly data Excel file.")
         return send_file(
             output,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -3863,7 +3989,233 @@ def api_download_data():
             download_name=filename
         )
     except Exception as e:
+        insert_audit_trail('download_monthly_data_failed', f"User '{session.get('username')}' failed to download monthly data Excel file: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+        
+@app.route('/audit-trails', methods=['GET'])
+def audit_trails_page():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    insert_audit_trail('view_audit_trails', f"User '{session.get('username')}' accessed audit trails page.")
+    return render_template(
+        'audit_trails.html',
+        username=session.get('username'),
+        fullname=session.get('fullname'),
+        division=session.get('division'),
+        role_access=session.get('role_access')
+    )
+
+@app.route('/api/audit-trails', methods=['GET'])
+def api_audit_trails():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    # insert_audit_trail('view_audit_trails_api', f"User '{session.get('username')}' accessed audit trails API.")
+    changed_at = request.args.get('changed_at')
+    page = int(request.args.get('page', 1))
+    page_size = int(request.args.get('page_size', 50))
+    offset = (page - 1) * page_size
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        params = []
+        where = ''
+        if changed_at:
+            where = 'WHERE CAST(changed_at AS DATE) = ?'
+            params.append(changed_at)
+        count_query = f"SELECT COUNT(*) FROM SSOT_AUDIT_TRAILS {where}"
+        cursor.execute(count_query, params)
+        total = cursor.fetchone()[0]
+        query = f"""
+            SELECT id, changed_at, changed_by, action, deskripsi, ip_address
+            FROM SSOT_AUDIT_TRAILS
+            {where}
+            ORDER BY changed_at DESC, id DESC
+            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+        """
+        params_page = params + [offset, page_size]
+        cursor.execute(query, params_page)
+        rows = cursor.fetchall()
+        data = []
+        for row in rows:
+            data.append({
+                'id': row[0],
+                'changed_at': row[1].isoformat() if row[1] else '',
+                'changed_by': row[2],
+                'action': row[3],
+                'deskripsi': row[4],
+                'ip_address': row[5],
+            })
+        return jsonify({'success': True, 'data': data, 'total': total})
+    except Exception as e:
+        logger.error(f"Error fetching audit trails: {str(e)}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+    finally:
+        if cursor:
+            try: cursor.close()
+            except: pass
+        if conn:
+            try: conn.close()
+            except: pass
+
+@app.route('/api/download-audit-trails', methods=['POST'])
+def api_download_audit_trails():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    # insert_audit_trail('download_audit_trails', f"User '{session.get('username')}' downloaded audit trails Excel.")
+    data = request.get_json() or {}
+    changed_at = data.get('changed_at')
+    changed_by = data.get('changed_by')
+    action = data.get('action')
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        params = []
+        where_clauses = []
+        if changed_at:
+            where_clauses.append('CAST(changed_at AS DATE) = ?')
+            params.append(changed_at)
+        if changed_by:
+            where_clauses.append('changed_by = ?')
+            params.append(changed_by)
+        if action:
+            where_clauses.append('action = ?')
+            params.append(action)
+        where = ''
+        if where_clauses:
+            where = 'WHERE ' + ' AND '.join(where_clauses)
+        query = f"""
+            SELECT changed_at, changed_by, action, deskripsi, ip_address
+            FROM SSOT_AUDIT_TRAILS
+            {where}
+            ORDER BY changed_at DESC, id DESC
+        """
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        # Create Excel
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Audit Trails'
+        ws.append(['No', 'Waktu', 'User', 'Aksi', 'Deskripsi', 'IP Address'])
+        for idx, row in enumerate(rows, 1):
+            ws.append([
+                idx,
+                row[0].strftime('%d-%m-%Y %H:%M:%S') if row[0] else '',
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+            ])
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = 'audit_trails.xlsx'
+        return send_file(output, as_attachment=True, download_name=filename, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    except Exception as e:
+        logger.error(f"Error exporting audit trails: {str(e)}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'})
+    finally:
+        if cursor:
+            try: cursor.close()
+            except: pass
+        if conn:
+            try: conn.close()
+            except: pass
+
+@app.route('/summary', methods=['GET'])
+def summary_page():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    
+    insert_audit_trail('view_summary', f"User '{session.get('username')}' accessed summary page.")
+    
+    return render_template(
+        'summary.html',
+        username=session.get('username'),
+        fullname=session.get('fullname'),
+        division=session.get('division'),
+        role_access=session.get('role_access')
+    )
+            
+@app.route('/api/summary', methods=['GET'])
+def api_summary():
+    """
+    Endpoint untuk datatable summary data dengan filter tanggal, pagination, dan limit
+    Query params: tanggal_data, page, page_size
+    """
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+    # insert_audit_trail('view_summary', f"User '{session.get('username')}' accessed summary API.")
+    
+    try:
+        tanggal_data = request.args.get('tanggal_data')
+        # If not provided, default to current year-month-01
+        if not tanggal_data or not tanggal_data.strip():
+            now = datetime.now()
+            tanggal_data = f"{now.year}-{now.month:02d}-01"
+        # If only YYYY-MM, append '-01'
+        elif len(tanggal_data) == 7:
+            tanggal_data = tanggal_data + '-01'
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('page_size', 50))
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Build dynamic SQL to get summary for all templates in one query
+        query_get_template_name = f"""
+            DECLARE @FilterDate DATE = '{tanggal_data}';
+            DECLARE @SQL NVARCHAR(MAX);
+            SELECT @SQL = STRING_AGG(
+                'SELECT ' 
+                + 'CAST(@FilterDate AS DATE) AS PERIOD_DATE, '
+                + '''' + template_name + ''' AS template_name, '
+                + '''' + division_name + ''' AS division_name, '
+                + 'COUNT(t.PERIOD_DATE) AS JUMLAH_DATA, '
+                + 'CASE WHEN COUNT(t.PERIOD_DATE) > 1 THEN ''TERSEDIA'' ELSE ''BELUM TERSEDIA'' END AS STATUS '
+                + 'FROM ' + QUOTENAME(template_name) + ' t '
+                + 'WHERE CAST(t.PERIOD_DATE AS DATE) = @FilterDate',
+                ' UNION ALL '
+            )
+            FROM MasterCreator;
+            EXEC sp_executesql @SQL, N'@FilterDate DATE', @FilterDate=@FilterDate;
+        """
+        cursor.execute(query_get_template_name)
+        rows = cursor.fetchall()
+        # Columns: PERIOD_DATE, template_name, division_name, JUMLAH_DATA, STATUS
+        data = []
+        for row in rows:
+            data.append({
+                'period_date': row[0].strftime('%Y-%m-%d') if row[0] else None,
+                'template_name': row[1],
+                'division_name': row[2],
+                'jumlah_data': row[3],
+                'status': row[4]
+            })
+        total_records = len(data)
+        # Pagination (manual, since dynamic SQL returns all rows)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paged_data = data[start:end]
+        
+        return jsonify({
+            'success': True,
+            'data': paged_data,
+            'total': total_records,
+            'page': page,
+            'page_size': page_size
+        })
+        
+    except Exception as e:
+        insert_audit_trail('view_monthly_data_failed', f"User '{session.get('username')}' failed to access monthly data API: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+    
     finally:
         if cursor: cursor.close()
         if conn: conn.close()

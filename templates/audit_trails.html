@@ -1,0 +1,264 @@
+{% extends "header.html" %}
+
+{% block title %}Data{% endblock %}
+
+{% block content %}
+
+    {% include 'sidebar.html' %}
+    <div class="main-content" id="mainContent">
+        <div class="content">
+            <div class="content-header" >
+                <h2 class="content-title">Audit Trails SSOT</h2>
+                <p class="content-subtitle">Riwayat Perubahan Data</p>
+            </div>
+            <div class="card" style="padding: 18px 20px; background: #f8fafc; border-radius: 10px; box-shadow: 0 1px 4px #e5e7eb; margin-bottom: 18px;">
+                <div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="date" id="filterChangedAt" style="padding: 7px 12px; border: 1px solid #d1d5db; border-radius: 4px; min-width: 140px;">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label for="filterChangedBy" style="font-size:0.97em;">User:</label>
+                        <select id="filterChangedBy" style="padding: 5px 10px; border-radius: 4px; border: 1px solid #d1d5db; min-width:120px;">
+                            <option value="">Semua</option>
+                        </select>
+                        <label for="filterAction" style="font-size:0.97em;">Aksi:</label>
+                        <select id="filterAction" style="padding: 5px 10px; border-radius: 4px; border: 1px solid #d1d5db; min-width:120px;">
+                            <option value="">Semua</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span>Tampilkan</span>
+                        <select id="pageSizeSelect" style="padding: 5px 10px; border-radius: 4px; border: 1px solid #d1d5db;">
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                        </select>
+                        <span>data</span>
+                    </div>
+                    <div style="font-size: 0.98rem; color: #334155; margin-left: auto;">
+                        <span id="totalRecordsInfo"></span>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button class="btn btn-success" onclick="downloadAuditTrails()">⬇ Download</button>
+                    </div>
+                </div>
+            </div>
+            <div id="auditTrailsTableWrapper" style="background: #fff; border-radius: 8px; box-shadow: 0 1px 4px #e5e7eb; margin-bottom: 18px; overflow-x:auto; max-width:100vw;"></div>
+            <div id="paginationControls" style="margin-bottom: 18px;"></div>
+        </div>
+    </div>
+
+    <script>
+        let auditData = [];
+        let originalData = [];
+        let currentPage = 1;
+        let pageSize = 50;
+        let totalRecords = 0;
+
+        function updateAuditDataPage() {
+            const startIdx = (currentPage - 1) * pageSize;
+            const endIdx = startIdx + pageSize;
+            auditData = filteredData.slice(startIdx, endIdx);
+        }
+
+        let filteredData = [];
+
+        function loadAuditData() {
+            const changedAt = document.getElementById('filterChangedAt').value;
+            let url = `/api/audit-trails?page=1&page_size=100000`;
+            if (changedAt) url += `&changed_at=${changedAt}`;
+            fetch(url)
+                .then(res => res.json())
+                .then(res => {
+                    if (res.success) {
+                        originalData = res.data;
+                        totalRecords = res.total;
+                        populateDropdownFilters();
+                        applyDropdownFilters();
+                        currentPage = 1;
+                        updateAuditDataPage();
+                        document.getElementById('totalRecordsInfo').textContent = `Total: ${originalData.length.toLocaleString()} data`;
+                        renderAuditTable();
+                        renderPagination();
+                    } else {
+                        document.getElementById('auditTrailsTableWrapper').innerHTML = `<div style='padding:30px;text-align:center;color:#ef4444;'>${res.message}</div>`;
+                    }
+                });
+        }
+
+        function populateDropdownFilters() {
+            // Populate changed_by
+            const changedBySet = new Set();
+            const actionSet = new Set();
+            originalData.forEach(row => {
+                if (row.changed_by) changedBySet.add(row.changed_by);
+                if (row.action) actionSet.add(row.action);
+            });
+            const changedBySelect = document.getElementById('filterChangedBy');
+            const actionSelect = document.getElementById('filterAction');
+            // Clear except first option
+            changedBySelect.length = 1;
+            actionSelect.length = 1;
+            Array.from(changedBySet).sort().forEach(val => {
+                const opt = document.createElement('option');
+                opt.value = val;
+                opt.textContent = val;
+                changedBySelect.appendChild(opt);
+            });
+            Array.from(actionSet).sort().forEach(val => {
+                const opt = document.createElement('option');
+                opt.value = val;
+                opt.textContent = val;
+                actionSelect.appendChild(opt);
+            });
+        }
+
+        function applyDropdownFilters() {
+            const changedBy = document.getElementById('filterChangedBy').value;
+            const action = document.getElementById('filterAction').value;
+            filteredData = originalData.filter(row => {
+                let match = true;
+                if (changedBy && row.changed_by !== changedBy) match = false;
+                if (action && row.action !== action) match = false;
+                return match;
+            });
+            currentPage = 1;
+            updateAuditDataPage();
+            renderAuditTable();
+            renderPagination();
+        }
+
+        function formatDateTime(dateStr) {
+            if (!dateStr) return '';
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return '';
+            const pad = n => n < 10 ? '0'+n : n;
+            return `${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+
+        function renderAuditTable() {
+            const wrapper = document.getElementById('auditTrailsTableWrapper');
+            if (!auditData.length) {
+                wrapper.innerHTML = '<div style="padding:30px;text-align:center;color:#64748b;">Tidak ada data</div>';
+                return;
+            }
+            // Urutan kolom sesuai struktur tabel
+            const columnOrder = [
+                'no','changed_at','changed_by','action','deskripsi','ip_address'
+            ];
+            const columnHeader = {
+                'no': 'No',
+                'changed_at': 'Waktu',
+                'changed_by': 'User',
+                'action': 'Aksi',
+                'deskripsi': 'Deskripsi',
+                'ip_address': 'IP Address'
+            };
+            let html = `<div style=\"max-height:500px;overflow-y:auto;\"><table style=\"min-width:700px;width:100%;font-size:0.95rem;border-collapse:collapse;\">\n<thead style=\"background:#f1f5f9;\">\n<tr>`;
+            columnOrder.forEach(col => {
+                let icon = '<span style="font-size:0.9em;color:#64748b;">⇅</span>';
+                if (sortState.col === col) {
+                    icon = `<span style="font-size:1em;color:#1e40af;">${sortState.asc ? '▲' : '▼'}</span>`;
+                }
+                html += `<th style="padding:10px 8px;border-bottom:2px solid #e5e7eb;text-align:left;font-weight:600;color:#334155;white-space:nowrap;cursor:pointer;user-select:none;position:sticky;top:0;z-index:2;background:#f1f5f9;" onclick="sortTableByColumn('${col}')">${columnHeader[col]} ${col==='no'?'':icon}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            auditData.forEach((row, idx) => {
+                html += '<tr style="border-bottom:1px solid #e5e7eb;">';
+                columnOrder.forEach(col => {
+                    let val = row[col];
+                    if (col === 'no') {
+                        val = (currentPage-1)*pageSize + idx + 1;
+                    } else if (col === 'changed_at') {
+                        val = formatDateTime(row['changed_at']);
+                    }
+                    html += `<td style="padding:8px 8px;border-right:1px solid #f3f4f6;white-space:nowrap;max-width:350px;overflow-x:auto;">${val ?? ''}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table></div>';
+            wrapper.innerHTML = html;
+        }
+
+        let sortState = {col: null, asc: true};
+        function sortTableByColumn(col) {
+            if (!originalData.length) return;
+            if (col === 'no') return; // No sort for numbering
+            if (sortState.col === col) sortState.asc = !sortState.asc;
+            else { sortState.col = col; sortState.asc = true; }
+            originalData.sort((a, b) => {
+                let va = a[col] ?? '';
+                let vb = b[col] ?? '';
+                if (col === 'changed_at') {
+                    va = new Date(va);
+                    vb = new Date(vb);
+                    if (isNaN(va.getTime())) va = new Date('1900-01-01');
+                    if (isNaN(vb.getTime())) vb = new Date('1900-01-01');
+                }
+                if (va < vb) return sortState.asc ? -1 : 1;
+                if (va > vb) return sortState.asc ? 1 : -1;
+                return 0;
+            });
+            updateAuditDataPage();
+            renderAuditTable();
+        }
+
+        function renderPagination() {
+            const controls = document.getElementById('paginationControls');
+            const totalPages = Math.ceil(originalData.length / pageSize);
+            controls.innerHTML = '';
+            if (totalPages > 1) {
+                controls.innerHTML = `
+                    <button class="btn btn-secondary btn-sm" ${currentPage==1?'disabled':''} onclick="currentPage--;updateAuditDataPage();renderAuditTable();renderPagination();">Prev</button>
+                    <span style="margin:0 10px;">Halaman ${currentPage} / ${totalPages}</span>
+                    <button class="btn btn-secondary btn-sm" ${currentPage==totalPages?'disabled':''} onclick="currentPage++;updateAuditDataPage();renderAuditTable();renderPagination();">Next</button>
+                `;
+            }
+        }
+
+        document.getElementById('filterChangedAt').addEventListener('change', function() {
+            currentPage = 1;
+            loadAuditData();
+        });
+        document.getElementById('pageSizeSelect').addEventListener('change', function() {
+            pageSize = parseInt(this.value,10);
+            currentPage = 1;
+            updateAuditDataPage();
+            renderAuditTable();
+            renderPagination();
+        });
+        document.getElementById('filterChangedBy').addEventListener('change', function() {
+            applyDropdownFilters();
+        });
+        document.getElementById('filterAction').addEventListener('change', function() {
+            applyDropdownFilters();
+        });
+
+        function downloadAuditTrails() {
+            const changedAt = document.getElementById('filterChangedAt').value;
+            const changedBy = document.getElementById('filterChangedBy').value;
+            const action = document.getElementById('filterAction').value;
+            fetch('/api/download-audit-trails', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({changed_at: changedAt, changed_by: changedBy, action: action})
+            }).then(res => {
+                if (res.ok) return res.blob();
+                else return res.json().then(data => {throw new Error(data.message)});
+            }).then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'audit_trails.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            }).catch(e => alert(e.message));
+        }
+
+        window.onload = function() {
+            loadAuditData();
+        };
+    </script>
+{% endblock %}
