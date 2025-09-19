@@ -58,6 +58,7 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <form id="createDivisionForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-header">
                         <h5 class="modal-title" id="createDivisionModalLabel">
                             <i class="fas fa-plus-circle"></i> Create New Division

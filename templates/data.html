@@ -48,6 +48,7 @@
         let currentPage = 1;
         let pageSize = 50;
         let totalRecords = 0;
+        const csrf_token = "{{ csrf_token() }}";
 
         function updateMonthlyDataPage() {
             const startIdx = (currentPage - 1) * pageSize;
@@ -214,7 +215,10 @@
             const tanggal = document.getElementById('filterTanggalData').value;
             fetch('/api/download-data', {
                 method: 'POST',
-                headers: {'Content-Type':'application/json'},
+                headers: {
+                    'Content-Type':'application/json',
+                    'X-CSRFToken': csrf_token
+                },
                 body: JSON.stringify({tanggal_data: tanggal})
             }).then(res => {
                 if (res.ok) return res.blob();
@@ -230,6 +234,7 @@
                     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
                     mmm_yy = `${monthNames[parseInt(month, 10) - 1]}_${year.slice(-2)}`;
                 }
+                if (!mmm_yy) mmm_yy = 'all';
                 a.download = `monthly_data_${mmm_yy}.xlsx`;
                 document.body.appendChild(a);
                 a.click();

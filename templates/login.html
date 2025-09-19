@@ -40,6 +40,7 @@
       <!-- Right side -->
       <div class="col-md-6 right-side">
         <form class="login-form" method="POST" action="{{ url_for('login') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <h3 class="mb-4 text-center">Login</h3>
 
           {% with messages = get_flashed_messages() %}

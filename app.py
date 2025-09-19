@@ -10,8 +10,12 @@ import logging
 import openpyxl
 
 from flask import Flask, flash, make_response, request, render_template, jsonify, redirect, session, url_for, send_file
+from flask_wtf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from functools import wraps
 from waitress import serve
+from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from datetime import datetime, time, date, timedelta
 from flask_bcrypt import Bcrypt
@@ -21,9 +25,27 @@ from io import BytesIO
 
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
+csrf = CSRFProtect(app)
+
+# Rate limiting
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"]
+)
 
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.secret_key = 'rahasiayangsangatrahasia'
+# Use secret key from environment variable for security
+app.secret_key = os.environ.get('FLASK_SECRET_KEY')
+if not app.secret_key:
+    import warnings
+    warnings.warn('FLASK_SECRET_KEY environment variable is not set! Using an insecure default key.', UserWarning)
+    app.secret_key = 'insecure-default-key'
+    
+# Harden session cookie settings
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 # Set idle session lifetime to 30 minutes
@@ -35,6 +57,17 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Konfigurasi logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Global error handler for generic user-facing errors
+@app.errorhandler(Exception)
+def handle_exception(e):
+    # Pass through HTTP errors
+    if isinstance(e, HTTPException):
+        return e
+    # Log full error details server-side
+    logger.error(f"Unhandled Exception: {e}", exc_info=True)
+    # Return generic error message to user
+    return render_template('error.html', message="An unexpected error occurred. Please contact support if the problem persists."), 500
 
 @app.before_request
 def check_idle_timeout():
@@ -1532,6 +1565,7 @@ def validate_password_strength(password):
 
          
 @app.route('/', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
 def login():
     if request.method == 'POST':
         username = request.form['username']
@@ -1655,6 +1689,7 @@ def logout():
     return redirect(url_for('login'))
 
 @app.route('/upload', methods=['GET', 'POST'])
+@limiter.limit("10 per minute")
 def upload_file():
     if 'username' not in session:
         flash("Please log in first.")

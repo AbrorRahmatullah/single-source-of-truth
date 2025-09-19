@@ -2,6 +2,7 @@
   <div class="modal-dialog">
     <div class="modal-content">
       <form id="editUserForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-header">
           <h5 class="modal-title" id="editUserModalLabel">Edit User</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>

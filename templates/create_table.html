@@ -29,6 +29,7 @@
                     </div>
 
                     <form id="createTableForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="grid-container">
                             <div class="form-group position-relative">
                                 <label for="table_name" class="form-label">Nama Template</label>
@@ -186,6 +187,7 @@
                 </div>
                 <div class="modal-body">
                     <form id="editTableForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" id="edit_table_id" name="table_id">
                         <div class="mb-3">
                             <label for="edit_table_name" class="form-label">Template Name</label>
