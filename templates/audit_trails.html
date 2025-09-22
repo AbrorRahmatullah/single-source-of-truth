@@ -146,15 +146,14 @@
             }
             // Urutan kolom sesuai struktur tabel
             const columnOrder = [
-                'no','changed_at','changed_by','action','deskripsi','ip_address'
+                'no','changed_at','changed_by','action','deskripsi'
             ];
             const columnHeader = {
                 'no': 'No',
                 'changed_at': 'Waktu',
                 'changed_by': 'User',
                 'action': 'Aksi',
-                'deskripsi': 'Deskripsi',
-                'ip_address': 'IP Address'
+                'deskripsi': 'Deskripsi'
             };
             let html = `<div style=\"max-height:500px;overflow-y:auto;\"><table style=\"min-width:700px;width:100%;font-size:0.95rem;border-collapse:collapse;\">\n<thead style=\"background:#f1f5f9;\">\n<tr>`;
             columnOrder.forEach(col => {

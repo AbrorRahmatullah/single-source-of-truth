@@ -109,7 +109,7 @@ def insert_audit_trail(action, deskripsi=None):
         conn = get_db_connection()
         cursor = conn.cursor()
         changed_by = session.get('username', 'anonymous')
-        ip_address = get_client_ip()
+        ip_address = request.remote_addr if request else None
         query = '''
             INSERT INTO SSOT_AUDIT_TRAILS (changed_by, action, deskripsi, ip_address)
             VALUES (?, ?, ?, ?)
@@ -4091,8 +4091,7 @@ def api_audit_trails():
                 'changed_at': row[1].isoformat() if row[1] else '',
                 'changed_by': row[2],
                 'action': row[3],
-                'deskripsi': row[4],
-                'ip_address': row[5],
+                'deskripsi': row[4]
             })
         return jsonify({'success': True, 'data': data, 'total': total})
     except Exception as e:
@@ -4146,15 +4145,14 @@ def api_download_audit_trails():
         wb = Workbook()
         ws = wb.active
         ws.title = 'Audit Trails'
-        ws.append(['No', 'Waktu', 'User', 'Aksi', 'Deskripsi', 'IP Address'])
+        ws.append(['No', 'Waktu', 'User', 'Aksi', 'Deskripsi'])
         for idx, row in enumerate(rows, 1):
             ws.append([
                 idx,
                 row[0].strftime('%d-%m-%Y %H:%M:%S') if row[0] else '',
                 row[1],
                 row[2],
-                row[3],
-                row[4],
+                row[3]
             ])
         output = BytesIO()
         wb.save(output)
