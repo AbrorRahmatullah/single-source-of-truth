@@ -89,6 +89,15 @@ def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ['xlsx', 'xls']
 
+def get_client_ip():
+    """Ambil IP asli client, prioritaskan dari X-Forwarded-For."""
+    if request.headers.get('X-Forwarded-For'):
+        # Bisa berisi lebih dari satu IP (jika lewat banyak proxy), ambil yang pertama
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    elif request.headers.get('X-Real-IP'):
+        return request.headers.get('X-Real-IP')
+    return request.remote_addr
+
 # --- Audit Trail Helper ---
 def insert_audit_trail(action, deskripsi=None):
     """
@@ -100,7 +109,7 @@ def insert_audit_trail(action, deskripsi=None):
         conn = get_db_connection()
         cursor = conn.cursor()
         changed_by = session.get('username', 'anonymous')
-        ip_address = request.remote_addr if request else None
+        ip_address = get_client_ip()
         query = '''
             INSERT INTO SSOT_AUDIT_TRAILS (changed_by, action, deskripsi, ip_address)
             VALUES (?, ?, ?, ?)
