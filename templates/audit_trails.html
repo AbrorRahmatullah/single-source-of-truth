@@ -55,7 +55,7 @@
         let currentPage = 1;
         let pageSize = 50;
         let totalRecords = 0;
-        const csrf_token = "{{ csrf_token() }}";
+    // CSRF token removed
 
         function updateAuditDataPage() {
             const startIdx = (currentPage - 1) * pageSize;
@@ -243,7 +243,7 @@
                 method: 'POST',
                 headers: {
                     'Content-Type':'application/json',
-                    'X-CSRFToken': csrf_token
+                    // 'X-CSRFToken': csrf_token
                 },
                 body: JSON.stringify({changed_at: changedAt, changed_by: changedBy, action: action})
             }).then(res => {

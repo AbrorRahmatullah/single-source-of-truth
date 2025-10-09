@@ -40,7 +40,7 @@
                     </div>
 
                     <form id="uploadForm" enctype="multipart/form-data">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <!-- CSRF token removed -->
                         <div class="grid-container">
                             <div class="form-group">
                                 <label for="table_name" class="form-label">Pilih template</label>
@@ -233,7 +233,7 @@
         let filteredDebiturData = [];
         let currentPage = 1;
         let pageSize = 50;
-        const csrf_token = "{{ csrf_token() }}";
+    // CSRF token removed
 
         function testConnection() {
             // Simulasi test koneksi database
@@ -1586,7 +1586,7 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRFToken': csrf_token
+                    // CSRF token removed
                 },
                 body: JSON.stringify(downloadData)
             })

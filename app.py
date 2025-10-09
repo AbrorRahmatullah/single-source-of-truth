@@ -25,7 +25,7 @@ from io import BytesIO
 
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
-csrf = CSRFProtect(app)
+# csrf = CSRFProtect(app)
 
 # Rate limiting
 limiter = Limiter(
