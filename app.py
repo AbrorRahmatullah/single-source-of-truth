@@ -31,7 +31,7 @@ bcrypt = Bcrypt(app)
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=["200 per day", "50 per hour"]
+    default_limits=["400 per day", "100 per hour"]
 )
 
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -1574,7 +1574,7 @@ def validate_password_strength(password):
 
          
 @app.route('/', methods=['GET', 'POST'])
-@limiter.limit("5 per minute")
+@limiter.limit("10 per minute")
 def login():
     if request.method == 'POST':
         username = request.form['username']
@@ -1698,7 +1698,7 @@ def logout():
     return redirect(url_for('login'))
 
 @app.route('/upload', methods=['GET', 'POST'])
-@limiter.limit("10 per minute")
+@limiter.limit("20 per minute")
 def upload_file():
     if 'username' not in session:
         flash("Please log in first.")
