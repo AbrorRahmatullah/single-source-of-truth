@@ -3,157 +3,154 @@
 {% block title %}Data{% endblock %}
 
 {% block content %}
+{% include 'sidebar.html' %}
+<div class="main-content" id="mainContent">
+    <div class="content">
+        <div class="content-header">
+            <h2 class="content-title">Summary Dashboard SSOT</h2>
+            <p class="content-subtitle">Centralized Insights for Streamlined Decision-Making</p>
+        </div>
 
-    {% include 'sidebar.html' %}
-    <div class="main-content" id="mainContent">
-        <div class="content">
-            <div class="content-header" >
-                <h2 class="content-title">Summary Dashboard SSOT</h2>
-                <p class="content-subtitle">Centralized Insights for Streamlined Decision-Making</p>
-            </div>
-            <div class="card" style="padding: 18px 20px; background: #f8fafc; border-radius: 10px; box-shadow: 0 1px 4px #e5e7eb; margin-bottom: 18px;">
-                <div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: center;">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <input type="month" id="filterTanggalData" style="padding: 7px 12px; border: 1px solid #d1d5db; border-radius: 4px; min-width: 140px;">
-                    </div>
-                    <div style="font-size: 0.98rem; color: #334155; margin-left: auto;">
-                        <span id="totalRecordsInfo"></span>
-                    </div>
+        <div class="card" style="padding:18px 20px;background:#f8fafc;border-radius:10px;box-shadow:0 1px 4px #e5e7eb;margin-bottom:18px;">
+            <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <input type="month" id="filterTanggalData" style="padding:7px 12px;border:1px solid #d1d5db;border-radius:4px;min-width:140px;">
+                </div>
+                <div style="font-size:0.98rem;color:#334155;margin-left:auto;">
+                    <span id="totalRecordsInfo"></span>
                 </div>
             </div>
-            <div id="summaryDataTableWrapper" style="background: #fff; border-radius: 8px; box-shadow: 0 1px 4px #e5e7eb; margin-bottom: 18px;"></div>
-            <div id="paginationControls" style="margin-bottom: 18px;"></div>
         </div>
+
+        <div id="summaryDataTableWrapper" style="background:#fff;border-radius:8px;box-shadow:0 1px 4px #e5e7eb;margin-bottom:18px;"></div>
+        <div id="paginationControls" style="margin-bottom:18px;"></div>
     </div>
+</div>
 
-    <script>
-        let summaryData = [];
-        let originalData = [];
-        let currentPage = 1;
-        let pageSize = 50;
-        let totalRecords = 0;
+<script>
+    let summaryData = [];
+    let originalData = [];
+    let currentPage = 1;
+    let pageSize = 50;
+    let totalRecords = 0;
+    let defaultDateUsed = null;
 
-        function updateSummaryDataPage() {
-            const startIdx = (currentPage - 1) * pageSize;
-            const endIdx = startIdx + pageSize;
-            summaryData = originalData.slice(startIdx, endIdx);
-        }
+    function updateSummaryDataPage() {
+        const startIdx = (currentPage - 1) * pageSize;
+        const endIdx = startIdx + pageSize;
+        summaryData = originalData.slice(startIdx, endIdx);
+    }
 
-        function loadSummaryData() {
-            const tanggal = document.getElementById('filterTanggalData').value;
-            let url = `/api/summary?page=1&page_size=100000`;
-            if (tanggal) url += `&tanggal_data=${tanggal}`;
-            fetch(url)
-                .then(res => res.json())
-                .then(res => {
-                    if (res.success) {
-                        originalData = res.data;
-                        totalRecords = res.total;
-                        currentPage = 1;
-                        updateSummaryDataPage();
-                        document.getElementById('totalRecordsInfo').textContent = `Total: ${totalRecords.toLocaleString()} data`;
-                        renderSummaryTable();
-                        renderPagination();
-                    } else {
-                        document.getElementById('summaryDataTableWrapper').innerHTML = `<div style='padding:30px;text-align:center;color:#ef4444;'>${res.message}</div>`;
+    function loadSummaryData(selectedDate = null) {
+        let url = `/api/summary?page=1&page_size=100000`;
+        if (selectedDate) url += `&tanggal_data=${selectedDate}`;
+
+        fetch(url)
+            .then(res => res.json())
+            .then(res => {
+                if (res.success) {
+                    originalData = res.data;
+                    totalRecords = res.total;
+                    currentPage = 1;
+                    updateSummaryDataPage();
+                    document.getElementById('totalRecordsInfo').textContent = `Total: ${totalRecords.toLocaleString()} data`;
+                    renderSummaryTable();
+                    renderPagination();
+
+                    // Set default month filter sesuai default_date dari backend
+                    if (res.default_date_used) {
+                        const d = new Date(res.default_date_used);
+                        const yyyy = d.getFullYear();
+                        const mm = String(d.getMonth() + 1).padStart(2, '0');
+                        document.getElementById('filterTanggalData').value = `${yyyy}-${mm}`;
+                        defaultDateUsed = res.default_date_used;
                     }
-                });
-        }
-
-        function formatMonthYear(dateStr) {
-            if (!dateStr) return '';
-            const d = new Date(dateStr);
-            if (isNaN(d.getTime())) return '';
-            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
-            return `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
-        }
-
-        function formatDateDMY(dateStr) {
-            if (!dateStr) return '';
-            const d = new Date(dateStr);
-            if (isNaN(d.getTime())) return '';
-            const pad = n => n < 10 ? '0'+n : n;
-            return `${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()}`;
-        }
-
-        function formatDateTime(dateStr) {
-            if (!dateStr) return '';
-            const d = new Date(dateStr);
-            if (isNaN(d.getTime())) return '';
-            const pad = n => n < 10 ? '0'+n : n;
-            return `${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-        }
-
-
-        function renderSummaryTable() {
-            const wrapper = document.getElementById('summaryDataTableWrapper');
-            if (!summaryData.length) {
-                wrapper.innerHTML = '<div style="padding:30px;text-align:center;color:#64748b;">Tidak ada data</div>';
-                return;
-            }
-            // Kolom untuk summary
-            const columnOrder = [
-                'period_date', 'template_name', 'division_name', 'jumlah_data', 'status'
-            ];
-            const columnLabels = {
-                'period_date': 'Periode',
-                'template_name': 'Nama Template',
-                'division_name': 'Divisi',
-                'jumlah_data': 'Jumlah Data',
-                'status': 'Status'
-            };
-            let html = `<div style=\"max-height:500px;overflow-y:auto;\"><table style=\"min-width:700px;width:100%;font-size:0.95rem;border-collapse:collapse;\">\n<thead style=\"background:#f1f5f9;\">\n<tr>`;
-            columnOrder.forEach(col => {
-                html += `<th style="padding:10px 8px;border-bottom:2px solid #e5e7eb;text-align:left;font-weight:600;color:#334155;white-space:nowrap;">${columnLabels[col]}</th>`;
+                } else {
+                    document.getElementById('summaryDataTableWrapper').innerHTML =
+                        `<div style='padding:30px;text-align:center;color:#ef4444;'>${res.message}</div>`;
+                }
             });
-            html += '</tr></thead><tbody>';
-            summaryData.forEach(row => {
-                html += '<tr style="border-bottom:1px solid #e5e7eb;">';
-                columnOrder.forEach(col => {
-                    let val = row[col];
-                    if (col === 'period_date') val = formatMonthYear(val);
-                    if (col === 'status') {
-                        if (val === 'TERSEDIA') {
-                            val = `<span style='vertical-align:middle;'>${val}</span> <span style='color:#22c55e;font-size:1.1em;font-weight:bold;vertical-align:middle;' title='Tersedia'>&#10003;</span>`;
-                        } else if (val === 'BELUM TERSEDIA') {
-                            val = `<span style='vertical-align:middle;'>${val}</span> <span style='color:#ef4444;font-size:1.1em;font-weight:bold;vertical-align:middle;' title='Belum Tersedia'>&#10007;</span>`;
-                        }
-                    }
-                    html += `<td style="padding:8px 8px;border-right:1px solid #f3f4f6;white-space:nowrap;">${val ?? ''}</td>`;
-                });
-                html += '</tr>';
-            });
-            html += '</tbody></table></div></div>';
-            wrapper.innerHTML = html;
+    }
+
+    function formatMonthYear(dateStr) {
+        if (!dateStr) return '';
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '';
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+        return `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+    }
+
+    function renderSummaryTable() {
+        const wrapper = document.getElementById('summaryDataTableWrapper');
+        if (!summaryData.length) {
+            wrapper.innerHTML = '<div style="padding:30px;text-align:center;color:#64748b;">Tidak ada data</div>';
+            return;
         }
 
-        // No sort for summary table (can be added if needed)
-
-        function renderPagination() {
-            const controls = document.getElementById('paginationControls');
-            const totalPages = Math.ceil(originalData.length / pageSize);
-            controls.innerHTML = '';
-            if (totalPages > 1) {
-                controls.innerHTML = `
-                    <button class="btn btn-secondary btn-sm" ${currentPage==1?'disabled':''} onclick="currentPage--;updateSummaryDataPage();renderSummaryTable();renderPagination();">Prev</button>
-                    <span style="margin:0 10px;">Halaman ${currentPage} / ${totalPages}</span>
-                    <button class="btn btn-secondary btn-sm" ${currentPage==totalPages?'disabled':''} onclick="currentPage++;updateSummaryDataPage();renderSummaryTable();renderPagination();">Next</button>
-                `;
-            }
-        }
-
-        document.getElementById('filterTanggalData').addEventListener('change', function() {
-            currentPage = 1;
-            loadSummaryData();
-        });
-
-        window.onload = function() {
-            // Set default value to current year and month
-            const now = new Date();
-            const yyyy = now.getFullYear();
-            const mm = String(now.getMonth() + 1).padStart(2, '0');
-            document.getElementById('filterTanggalData').value = `${yyyy}-${mm}`;
-            loadSummaryData();
+        const columnOrder = ['period_date', 'template_name', 'division_name', 'jumlah_data', 'status'];
+        const columnLabels = {
+            'period_date': 'Periode',
+            'template_name': 'Nama Template',
+            'division_name': 'Divisi',
+            'jumlah_data': 'Jumlah Data',
+            'status': 'Status'
         };
-    </script>
+
+        let html = `<div style="max-height:500px;overflow-y:auto;">
+                    <table style="min-width:700px;width:100%;font-size:0.95rem;border-collapse:collapse;">
+                    <thead style="background:#f1f5f9;">
+                    <tr>`;
+        columnOrder.forEach(col => {
+            html += `<th style="padding:10px 8px;border-bottom:2px solid #e5e7eb;text-align:left;font-weight:600;color:#334155;white-space:nowrap;">
+                     ${columnLabels[col]}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+
+        summaryData.forEach(row => {
+            html += '<tr style="border-bottom:1px solid #e5e7eb;">';
+            columnOrder.forEach(col => {
+                let val = row[col];
+                if (col === 'period_date') val = formatMonthYear(val);
+                if (col === 'status') {
+                    if (val === 'TERSEDIA') {
+                        val = `<span style='vertical-align:middle;'>${val}</span>
+                               <span style='color:#22c55e;font-size:1.1em;font-weight:bold;vertical-align:middle;' title='Tersedia'>&#10003;</span>`;
+                    } else if (val === 'BELUM TERSEDIA') {
+                        val = `<span style='vertical-align:middle;'>${val}</span>
+                               <span style='color:#ef4444;font-size:1.1em;font-weight:bold;vertical-align:middle;' title='Belum Tersedia'>&#10007;</span>`;
+                    }
+                }
+                html += `<td style="padding:8px 8px;border-right:1px solid #f3f4f6;white-space:nowrap;">${val ?? ''}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        wrapper.innerHTML = html;
+    }
+
+    function renderPagination() {
+        const controls = document.getElementById('paginationControls');
+        const totalPages = Math.ceil(originalData.length / pageSize);
+        controls.innerHTML = '';
+        if (totalPages > 1) {
+            controls.innerHTML = `
+                <button class="btn btn-secondary btn-sm" ${currentPage==1?'disabled':''}
+                    onclick="currentPage--;updateSummaryDataPage();renderSummaryTable();renderPagination();">Prev</button>
+                <span style="margin:0 10px;">Halaman ${currentPage} / ${totalPages}</span>
+                <button class="btn btn-secondary btn-sm" ${currentPage==totalPages?'disabled':''}
+                    onclick="currentPage++;updateSummaryDataPage();renderSummaryTable();renderPagination();">Next</button>
+            `;
+        }
+    }
+
+    document.getElementById('filterTanggalData').addEventListener('change', function() {
+        currentPage = 1;
+        loadSummaryData(this.value);
+    });
+
+    window.onload = function() {
+        // Load data default dari backend (akan menentukan EOM otomatis)
+        loadSummaryData();
+    };
+</script>
 {% endblock %}

@@ -1593,6 +1593,8 @@ def login():
             session['role_access'] = user[1]
             session['upload_done'] = True
             insert_audit_trail('login', f"User '{session.get('username')}' logged in.")
+            if user[1].lower() == 'admin':
+                return redirect(url_for('summary_page'))
             return redirect(url_for('upload_file'))
         
         insert_audit_trail('failed_login', f"Failed login attempt for username '{username}'.")
@@ -4187,30 +4189,50 @@ def summary_page():
             
 @app.route('/api/summary', methods=['GET'])
 def api_summary():
-    """
-    Endpoint untuk datatable summary data dengan filter tanggal, pagination, dan limit
-    Query params: tanggal_data, page, page_size
-    """
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first.'})
-    # insert_audit_trail('view_summary', f"User '{session.get('username')}' accessed summary API.")
-    
+
     try:
         tanggal_data = request.args.get('tanggal_data')
-        # If not provided, default to current year-month-01
-        if not tanggal_data or not tanggal_data.strip():
-            now = datetime.now()
-            tanggal_data = f"{now.year}-{now.month:02d}-01"
-        # If only YYYY-MM, append '-01'
-        elif len(tanggal_data) == 7:
-            tanggal_data = tanggal_data + '-01'
-        page = int(request.args.get('page', 1))
-        page_size = int(request.args.get('page_size', 50))
-
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Build dynamic SQL to get summary for all templates in one query
+        now = datetime.now()
+
+        if not tanggal_data or not tanggal_data.strip():
+            # Ambil semua EOM tahun berjalan
+            cursor.execute("""
+                SELECT EOM_DATE
+                FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_EOM
+                WHERE YEAR(EOM_DATE) = YEAR(GETDATE())
+                ORDER BY EOM_DATE ASC
+            """)
+            eom_dates = [row[0] for row in cursor.fetchall()]
+
+            # Pilih EOM terakhir yang <= tanggal hari ini
+            default_eom = None
+            for eom in eom_dates:
+                if eom <= now.date():
+                    default_eom = eom
+                else:
+                    break
+
+            # Jika belum ada yang lewat (misal awal tahun), pakai EOM pertama
+            if default_eom:
+                # Gunakan awal bulan agar konsisten dengan input manual (YYYY-MM-01)
+                tanggal_data = f"{default_eom.year}-{default_eom.month:02d}-01"
+            else:
+                tanggal_data = f"{now.year}-{now.month:02d}-01"
+
+        elif len(tanggal_data) == 7:
+            # Jika input manual hanya YYYY-MM, tambahkan '-01'
+            tanggal_data = tanggal_data + '-01'
+
+        # Pagination
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('page_size', 50))
+
+        # Query utama
         query_get_template_name = f"""
             DECLARE @FilterDate DATE = '{tanggal_data}';
             DECLARE @SQL NVARCHAR(MAX);
@@ -4228,36 +4250,37 @@ def api_summary():
             FROM MasterCreator;
             EXEC sp_executesql @SQL, N'@FilterDate DATE', @FilterDate=@FilterDate;
         """
+
         cursor.execute(query_get_template_name)
         rows = cursor.fetchall()
-        # Columns: PERIOD_DATE, template_name, division_name, JUMLAH_DATA, STATUS
-        data = []
-        for row in rows:
-            data.append({
-                'period_date': row[0].strftime('%Y-%m-%d') if row[0] else None,
-                'template_name': row[1],
-                'division_name': row[2],
-                'jumlah_data': row[3],
-                'status': row[4]
-            })
+
+        data = [{
+            'period_date': row[0].strftime('%Y-%m-%d') if row[0] else None,
+            'template_name': row[1],
+            'division_name': row[2],
+            'jumlah_data': row[3],
+            'status': row[4]
+        } for row in rows]
+
         total_records = len(data)
-        # Pagination (manual, since dynamic SQL returns all rows)
         start = (page - 1) * page_size
         end = start + page_size
         paged_data = data[start:end]
-        
+
         return jsonify({
             'success': True,
             'data': paged_data,
             'total': total_records,
             'page': page,
-            'page_size': page_size
+            'page_size': page_size,
+            'default_date_used': tanggal_data  # Kirim tanggal default ke frontend
         })
-        
+
     except Exception as e:
-        insert_audit_trail('view_monthly_data_failed', f"User '{session.get('username')}' failed to access monthly data API: {str(e)}")
+        insert_audit_trail('view_monthly_data_failed',
+            f"User '{session.get('username')}' failed to access monthly data API: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
-    
+
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
