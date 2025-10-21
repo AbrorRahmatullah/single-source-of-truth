@@ -13,21 +13,24 @@
         <!-- Main Menu Section -->
         <div class="menu-section">
             <div class="menu-section-title">Main Menu</div>
+            {% if session.role_access == 'admin' %}
+            <a href="/summary" class="menu-item {% if request.path == '/summary' %}active{% endif %}">
+                Dashboard Summary
+            </a>
+            
             <a href="/data" class="menu-item {% if request.path == '/data' %}active{% endif %}">
                 Download Data
             </a>
+            {% endif %}
             <a href="/upload" class="menu-item {% if request.path == '/upload' %}active{% endif %}">
                 Upload Data
             </a>
         </div>
         
         <!-- Admin Menu Section -->
-         {% if session.role_access == 'admin' %}
+        {% if session.role_access == 'admin' %}
         <div class="menu-section">
             <div class="menu-section-title">Admin Panel</div>
-            <a href="/summary" class="menu-item {% if request.path == '/summary' %}active{% endif %}">
-                Dashboard Summary
-            </a>
 
             <a href="/create-table" class="menu-item {% if request.path == '/create-table' %}active{% endif %}">
                 Template Management
