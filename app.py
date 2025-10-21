@@ -17,8 +17,6 @@ from routes.debitur_routes import debitur_bp
 from routes.division_routes import division_bp
 from routes.user_routes import user_bp
 
-print("🚀 Flask app starting...")
-
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
