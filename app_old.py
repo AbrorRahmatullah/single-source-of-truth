@@ -84,20 +84,10 @@ def check_idle_timeout():
 
     # Update waktu terakhir aktivitas
     session["last_activity"] = datetime.now().isoformat()
-
+# 
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ['xlsx', 'xls']
-
-def get_client_ip():
-    """Ambil IP asli client, prioritaskan dari X-Forwarded-For."""
-    if request.headers.get('X-Forwarded-For'):
-        # Bisa berisi lebih dari satu IP (jika lewat banyak proxy), ambil yang pertama
-        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
-    elif request.headers.get('X-Real-IP'):
-        return request.headers.get('X-Real-IP')
-    return request.remote_addr
-
 # --- Audit Trail Helper ---
 def insert_audit_trail(action, deskripsi=None):
     """
@@ -129,68 +119,13 @@ def insert_audit_trail(action, deskripsi=None):
                 conn.close()
         except:
             pass
-
+# 
 def normalize_column_name(col_name):
     """Normalize column name for comparison"""
     if pd.isna(col_name):
         return ""
     return str(col_name).strip()
-
-def find_matching_column(excel_header, db_columns, strict_mode=False):
-    """
-    Find matching database column for Excel header with fallback strategies
-    
-    Args:
-        excel_header: Header from Excel file
-        db_columns: List of database column names
-        strict_mode: If True, only exact matches allowed
-    
-    Returns:
-        matched_db_column or None
-    """
-    if not excel_header or pd.isna(excel_header):
-        return None
-    
-    excel_norm = normalize_column_name(excel_header)
-    if not excel_norm:
-        return None
-    
-    # Strategy 1: Exact match (normalized)
-    for db_col in db_columns:
-        db_norm = normalize_column_name(db_col)
-        if excel_norm == db_norm:
-            return db_col
-    
-    if strict_mode:
-        return None
-    
-    # Strategy 2: Space to underscore conversion
-    excel_underscore = excel_norm.replace(' ', '_')
-    for db_col in db_columns:
-        db_norm = normalize_column_name(db_col)
-        db_underscore = db_norm.replace(' ', '_')
-        if excel_underscore == db_underscore:
-            return db_col
-    
-    # Strategy 3: Remove all separators (spaces, underscores, hyphens)
-    excel_clean = re.sub(r'[\s_-]+', '', excel_norm)
-    if len(excel_clean) >= 3:  # Only for meaningful length
-        for db_col in db_columns:
-            db_norm = normalize_column_name(db_col)
-            db_clean = re.sub(r'[\s_-]+', '', db_norm)
-            if excel_clean == db_clean:
-                return db_col
-    
-    # Strategy 4: Substring matching (minimum 4 characters)
-    if len(excel_norm) >= 4:
-        for db_col in db_columns:
-            db_norm = normalize_column_name(db_col)
-            if len(db_norm) >= 4:
-                if excel_norm in db_norm or db_norm in excel_norm:
-                    return db_col
-    
-    return None
-
+# 
 def find_primary_header_row(df, primary_header_pattern=None):
     def normalize_text(text):
         if pd.isna(text):
@@ -311,7 +246,7 @@ def find_primary_header_row(df, primary_header_pattern=None):
                 return idx, detected_primary
 
     raise ValueError("Tidak dapat menemukan baris header. Pastikan file Excel memiliki baris header yang jelas.")
-
+# 
 def find_header_row_and_validate(df, required_headers, primary_header_pattern=None):
     """
     Enhanced header finding with strict column validation
@@ -516,7 +451,7 @@ def find_header_row_and_validate(df, required_headers, primary_header_pattern=No
         # Re-raise with additional context
         logger.error(f"Column validation failed: {str(e)}")
         raise ValueError(str(e))
-
+# 
 def find_data_start_row(df, header_row, detected_primary_header):
     """
     Mencari baris mulai data berdasarkan kolom primary header yang terdeteksi
@@ -583,7 +518,7 @@ def find_data_start_row(df, header_row, detected_primary_header):
     
     logger.info(f"Data mulai dari baris: {data_start_row + 1} (Excel row: {data_start_row + 2})")
     return data_start_row
-
+# 
 def get_column_info(table_name, exclude_automatic=True):
     """
     Mendapatkan informasi kolom dari tabel database dengan informasi lengkap
@@ -647,13 +582,13 @@ def get_column_info(table_name, exclude_automatic=True):
             cursor.close()
         if conn:
             conn.close()
-
+# 
 def get_automatic_columns():
     """
     Mendapatkan daftar kolom yang otomatis ditambahkan sistem
     """
     return ['id', 'period_date', 'upload_date']
-
+# 
 def validate_and_convert_value(value, column_info, column_name):
     """
     Improved validation with better error handling and type conversion
@@ -758,64 +693,7 @@ def validate_and_convert_value(value, column_info, column_name):
             
     except Exception as e:
         return None, False, f"Validation error: {str(e)}"
-
-def validate_batch_data(df, columns_info):
-    """
-    Validate entire batch of data before insert
-    Returns: (validated_df, is_valid, validation_errors)
-    PERBAIKAN: Handle database default marker
-    """
-    validation_errors = []
-    validated_data = {}
-    
-    # Initialize validated data structure
-    for col in df.columns:
-        validated_data[col] = []
-    
-    # Validate each row
-    for idx, row in df.iterrows():
-        row_errors = []
-        row_data = {}
-        
-        # Validate each column in the row
-        for col in df.columns:
-            if col in columns_info:
-                value = row[col]
-                column_info = columns_info[col]
-                
-                converted_value, is_valid, error_msg = validate_and_convert_value(
-                    value, column_info, col
-                )
-                
-                if not is_valid:
-                    row_errors.append(f"Row {idx + 1}, Column '{col}': {error_msg}")
-                else:
-                    row_data[col] = converted_value
-            else:
-                # PERBAIKAN: Handle kolom yang tidak ada di schema database
-                # Ini mungkin kolom yang akan di-skip atau kolom otomatis
-                row_data[col] = row[col]
-        
-        # If any validation error in this row, record it
-        if row_errors:
-            validation_errors.extend(row_errors)
-        
-        # PERBAIKAN: Selalu tambahkan data row, bahkan jika ada error
-        # Ini untuk mempertahankan struktur DataFrame
-        for col in df.columns:
-            if col in row_data:
-                validated_data[col].append(row_data[col])
-            else:
-                validated_data[col].append(row[col])  # Use original value if not processed
-    
-    # If any validation errors, return failure
-    if validation_errors:
-        return None, False, validation_errors
-    
-    # Create validated DataFrame
-    validated_df = pd.DataFrame(validated_data)
-    return validated_df, True, []
-
+# 
 def process_uploaded_data(df, table_name):
     """
     Process uploaded DataFrame with proper NULL handling
@@ -884,7 +762,7 @@ def process_uploaded_data(df, table_name):
             cursor.close()
         if conn:
             conn.close()
-
+# 
 def process_excel_file(file_path, table_name, primary_header=None, sheet_name=None, periode_date=None):
     """
     Enhanced Excel processing with strict column validation
@@ -1082,7 +960,7 @@ def process_excel_file(file_path, table_name, primary_header=None, sheet_name=No
     except Exception as e:
         logger.error(f"Error processing Excel file: {str(e)}")
         return {'success': False, 'message': f'Error processing file: {str(e)}'}
-
+# 
 def insert_to_database(df, table_name, periode_date=None, replace_existing=True):
     """
     Insert dataframe ke SQL Server table - data sudah tervalidasi
@@ -1198,7 +1076,7 @@ def insert_to_database(df, table_name, periode_date=None, replace_existing=True)
             cursor.close()
         if conn:
             conn.close()
-
+# 
 def normalize_value(value, dtype=None):
     """
     Normalisasi nilai untuk insert ke SQL Server:
@@ -1226,7 +1104,7 @@ def normalize_value(value, dtype=None):
         return 0 if dtype and ('int' in dtype or 'float' in dtype) else None
 
     return value
-    
+# 
 def process_default_value(default_value, column_info):
     """
     Process default value based on column type
@@ -1302,7 +1180,7 @@ def process_default_value(default_value, column_info):
     except (ValueError, TypeError) as e:
         logger.warning(f"Error processing default value '{default_value}' for column '{column_info['name']}': {str(e)}")
         return '__USE_DATABASE_DEFAULT__'
-
+# 
 def handle_null_values_for_column(value, column_info):
     """
     Handle NULL values based on column configuration
@@ -1331,7 +1209,7 @@ def handle_null_values_for_column(value, column_info):
     
     # If not null, return the value as is (will be processed later based on column type)
     return value
-
+# 
 def get_template_tables(role_access=None, division=None):
     """
     Mendapatkan daftar template dari MasterCreator.
@@ -1369,7 +1247,7 @@ def get_template_tables(role_access=None, division=None):
             cursor.close()
         if conn:
             conn.close()
-
+# 
 def get_data_count_by_period(table_name):
     """
     Mendapatkan jumlah data berdasarkan period_date untuk tabel tertentu
@@ -1422,7 +1300,7 @@ def get_data_count_by_period(table_name):
             cursor.close()
         if conn:
             conn.close()
-            
+#
 def get_master_divisions_tables():
     conn = None
     cursor = None
@@ -1447,7 +1325,7 @@ def get_master_divisions_tables():
             cursor.close()
         if conn:
             conn.close()
-
+# 
 def get_excel_sheets(file_path):
     """
     Mendapatkan daftar nama sheet dalam file Excel
@@ -1468,7 +1346,7 @@ def get_excel_sheets(file_path):
     except Exception as e:
         logger.error(f"Error reading Excel sheets: {str(e)}")
         return None
-
+# 
 def convert_value_for_sql_server(value):
     """
     Convert Python values specifically for SQL Server driver compatibility
@@ -1508,7 +1386,7 @@ def convert_value_for_sql_server(value):
     # Default case
     else:
         return str(value)
-
+# 
 def safe_insert_single_record(table_name, columns, values):
     """
     Helper function untuk insert single record dengan error handling
@@ -1549,7 +1427,7 @@ def safe_insert_single_record(table_name, columns, values):
             cursor.close()
         if conn:
             conn.close()
-
+# 
 def validate_password_strength(password):
     """
     Validasi password dengan kriteria:
