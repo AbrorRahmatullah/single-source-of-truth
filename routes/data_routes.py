@@ -35,7 +35,6 @@ def api_data():
     """
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first.'})
-    # insert_audit_trail('view_monthly_data', f"User '{session.get('username')}' accessed monthly data API.")
     
     try:
         tanggal_data = request.args.get('tanggal_data')
@@ -45,39 +44,49 @@ def api_data():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Filter tanggal_data jika ada
+        # Filter tanggal
         where_clause = ""
         params = []
         if tanggal_data:
-            # Jika hanya bulan-tahun, filter dengan LIKE atau range
-            if len(tanggal_data) == 7:  # format YYYY-MM
-                where_clause = "WHERE CONVERT(VARCHAR(7), Tanggal_Data, 120) = ?"
+            if len(tanggal_data) == 7:  
+                where_clause = "WHERE CONVERT(VARCHAR(7), m.Tanggal_Data, 120) = ?"
                 params.append(tanggal_data)
             else:
-                where_clause = "WHERE Tanggal_Data = ?"
+                where_clause = "WHERE m.Tanggal_Data = ?"
                 params.append(tanggal_data)
 
-        # Hitung total data
-        count_query = f"SELECT COUNT(*) FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] {where_clause}"
+        # Hitung total
+        count_query = f"SELECT COUNT(*) FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m {where_clause}"
         cursor.execute(count_query, params)
         total_records = cursor.fetchone()[0]
 
-        # Ambil data dengan pagination
+        # Ambil data + JOIN
         offset = (page - 1) * page_size
         data_query = f"""
-            SELECT *
-            FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY]
+            SELECT 
+                m.*,
+                CASE 
+                    WHEN m.Interest_Reference_Rate IS NULL OR m.Interest_Reference_Rate = ''
+                        THEN 'FIXED'
+                    ELSE r.interest_reference_rate_group
+                END AS Interest_Reference_Rate_Group
+            FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
+            LEFT JOIN MasterInterestReferenceRate r
+                ON m.Interest_Reference_Rate = r.interest_reference_rate
             {where_clause}
-            ORDER BY Tanggal_Data DESC
+            ORDER BY m.Tanggal_Data DESC
             OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
         """
+
         cursor.execute(data_query, params + [offset, page_size])
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
 
         data = [dict(zip(columns, row)) for row in rows]
+
+        insert_audit_trail('view_monthly_data',
+            f"User '{session.get('username')}' viewed monthly data, page {page}.")
         
-        insert_audit_trail('view_monthly_data', f"User '{session.get('username')}' viewed monthly data, page {page}.")
         return jsonify({
             'success': True,
             'data': data,
@@ -85,9 +94,12 @@ def api_data():
             'page': page,
             'page_size': page_size
         })
+
     except Exception as e:
-        insert_audit_trail('view_monthly_data_failed', f"User '{session.get('username')}' failed to access monthly data API: {str(e)}")
+        insert_audit_trail('view_monthly_data_failed',
+            f"User '{session.get('username')}' failed: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
+
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
@@ -99,7 +111,6 @@ def api_download_data():
     """
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first.'})
-    # insert_audit_trail('view_download_monthly_data', f"User '{session.get('username')}' accessed download monthly data Excel page.")
     
     try:
         tanggal_data = request.json.get('tanggal_data')
@@ -109,25 +120,111 @@ def api_download_data():
         where_clause = ""
         params = []
         if tanggal_data:
-            if len(tanggal_data) == 7:  # format YYYY-MM
-                where_clause = "WHERE CONVERT(VARCHAR(7), Tanggal_Data, 120) = ?"
+            if len(tanggal_data) == 7:
+                where_clause = "WHERE CONVERT(VARCHAR(7), m.Tanggal_Data, 120) = ?"
                 params.append(tanggal_data)
             else:
-                where_clause = "WHERE Tanggal_Data = ?"
+                where_clause = "WHERE m.Tanggal_Data = ?"
                 params.append(tanggal_data)
 
-        # --- Ambil data utama ---
+        # Query lengkap + JOIN
         query = f"""
-            SELECT * 
-            FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] 
-            {where_clause} 
-            ORDER BY Tanggal_Data DESC
+            SELECT 
+                m.Tanggal_Data,
+                m.Facility_No,
+                m.Customer_Name_SLIK,
+                m.Alias,
+                m.Customer_ID,
+                m.Kode_Revenue,
+                m.Product_Name,
+                m.Sub_Product_Name,
+                m.Financing_Scheme,
+                m.Financing_Category_Type,
+                m.Nilai_Proyek,
+                m.Klasifikasi_Proyek,
+                m.Kategori_Proyek,
+                m.Progress_Proyek,
+                m.Lokasi_Proyek,
+                m.Output_Proyek,
+                m.Satuan_Output_Proyek,
+                m.RM_PIC,
+                m.Flag_Negative_Pledge,
+                m.Flag_Clean_Basis,
+                m.Golongan_Debitur,
+                m.Nama_Kelompok_Debitur,
+                m.Sektor,
+                m.Sektor_Ekonomi_Lapangan_Usaha,
+                m.Obyek_Pembiayaan,
+                m.Kategori_Usaha_Keuangan_Berkelanjutan,
+                m.Facility_Activation_Date,
+                m.Perjanjian_Kredit_Date,
+                m.Komitmen_ori,
+                m.Komitmen_idr,
+                m.Kelonggaran_Tarik,
+                m.Availability_Period,
+                m.OS_Principal,
+                m.OS_IDR,
+                m.Currency,
+                m.Interest_Rate,
+                m.Interest_Type,
+                m.Interest_Reference_Rate,
+
+                CASE
+                    WHEN m.Interest_Reference_Rate IS NULL OR m.Interest_Reference_Rate = ''
+                        THEN 'FIXED'
+                    ELSE r.interest_reference_rate_group
+                END AS Interest_Reference_Rate_Group,
+
+                m.Maturity_Date,
+                m.Start_Date_Facility,
+                m.Category,
+                m.Sub_Category,
+                m.Divisi,
+                m.Kategori_Badan_Usaha,
+                m.Sub_Kategori_Badan_Usaha,
+                m.Source_of_Fund,
+                m.Rating_Debitur_Internal,
+                m.Rating_Debitur_Eksternal,
+                m.Stage,
+                m.Watchlist_Flag,
+                m.Flag_Restrukturisasi,
+                m.Tanggal_Awal_Restru,
+                m.Tanggal_Akhir_Restru,
+                m.Kolektibilitas,
+                m.Metode_CKPN,
+                m.CKPN_Aset_Baik,
+                m.CKPN_Aset_Kurang_Baik,
+                m.CKPN_Aset_Tidak_Baik,
+                m.CKPN,
+                m.Flag_Penjaminan,
+                m.Flag_Penugasan,
+                m.isSyariah,
+                m.load_date
+            FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
+            LEFT JOIN MasterInterestReferenceRate r
+                ON m.Interest_Reference_Rate = r.interest_reference_rate
+            {where_clause}
+            ORDER BY m.Tanggal_Data DESC
+
         """
+
         cursor.execute(query, params)
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
 
-        # --- Ambil daftar kolom numeric ---
+        # Kolom yang dihapus
+        remove_cols = {
+            "Klasifikasi_Proyek",
+            "Kategori_Proyek",
+            "Output_Proyek",
+            "Satuan_Output_Proyek"
+        }
+
+        keep_indices = [i for i, col in enumerate(columns) if col not in remove_cols]
+        filtered_columns = [columns[i] for i in keep_indices]
+        filtered_rows = [[row[i] for i in keep_indices] for row in rows]
+
+        # Kolom numeric
         cursor.execute("""
             SELECT COLUMN_NAME
             FROM INFORMATION_SCHEMA.COLUMNS
@@ -136,51 +233,49 @@ def api_download_data():
         """)
         numeric_columns = {row[0] for row in cursor.fetchall()}
 
-        # --- Buat Workbook ---
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Monthly Data"
 
-        # Header
-        ws.append(columns)
+        ws.append(filtered_columns)
+        for row in filtered_rows:
+            ws.append(row)
 
-        # Data rows
-        for row in rows:
-            ws.append(list(row))
-
-        # Format kolom numeric agar tidak eksponen & bisa di-SUM
         from openpyxl.styles import numbers
-        for col_idx, col_name in enumerate(columns, start=1):
+        for col_idx, col_name in enumerate(filtered_columns, start=1):
             if col_name in numeric_columns:
-                for row_idx in range(2, len(rows) + 2):  # skip header
-                    cell = ws.cell(row=row_idx, column=col_idx)
-                    cell.number_format = numbers.FORMAT_NUMBER_COMMA_SEPARATED1
+                for row_idx in range(2, len(filtered_rows) + 2):
+                    ws.cell(row=row_idx, column=col_idx).number_format = numbers.FORMAT_NUMBER_COMMA_SEPARATED1
 
-        # Auto adjust column width
-        for col_idx, col_name in enumerate(columns, start=1):
-            max_length = len(str(col_name))  # header length
-            for row in rows:
-                value = row[col_idx - 1]
-                if value is not None:
-                    max_length = max(max_length, len(str(value)))
-            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max_length + 2, 50)
+        # Auto width
+        for col_idx, col_name in enumerate(filtered_columns, start=1):
+            max_len = len(str(col_name))
+            for row in filtered_rows:
+                val = row[col_idx - 1]
+                if val:
+                    max_len = max(max_len, len(str(val)))
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max_len + 2, 50)
 
-        # Output ke response
         output = BytesIO()
         wb.save(output)
         output.seek(0)
         filename = f"monthly_data_{tanggal_data}.xlsx"
-        
-        insert_audit_trail('download_monthly_data', f"User '{session.get('username')}' downloaded monthly data Excel file.")
+
+        insert_audit_trail('download_monthly_data',
+            f"User '{session.get('username')}' downloaded Excel.")
+
         return send_file(
             output,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
             download_name=filename
         )
+
     except Exception as e:
-        insert_audit_trail('download_monthly_data_failed', f"User '{session.get('username')}' failed to download monthly data Excel file: {str(e)}")
+        insert_audit_trail('download_monthly_data_failed',
+            f"User '{session.get('username')}' failed: {str(e)}")
         return jsonify({'success': False, 'message': str(e)})
+
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
