@@ -65,16 +65,21 @@ def api_data():
         data_query = f"""
             SELECT 
                 m.*,
+                ISNULL(
+                    CASE 
+                        WHEN m.IsSyariah = 'N' THEN k.interest_reference_rate_group
+                        WHEN m.IsSyariah = 'Y' THEN s.interest_reference_rate_group
+                    END, 
+                    m.Interest_Reference_Rate
+                ) AS Interest_Reference_Rate_Group,
+                
                 CASE
                     WHEN m.IsSyariah = 'N' THEN 
-                        ISNULL(k.interest_reference_rate_group, m.Interest_Reference_Rate)
+                        ISNULL(k.interest_reference_rate_ssot, k.interest_reference_rate_group)
                     WHEN m.IsSyariah = 'Y' THEN
-                        CASE 
-                            WHEN s.interest_reference_rate_ssot IS NOT NULL
-                                THEN s.interest_reference_rate_ssot
-                            ELSE m.Interest_Reference_Rate
-                        END
-                END AS Interest_Reference_Rate_Group
+                        ISNULL(s.interest_reference_rate_ssot, s.interest_reference_rate_group)
+                END AS Interest_Reference_Rate_SSOT
+                
             FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
             LEFT JOIN MasterInterestReferenceRateKonven k
                 ON m.IsSyariah = 'N'
@@ -178,16 +183,20 @@ def api_download_data():
                 m.Interest_Rate,
                 m.Interest_Type,
                 m.Interest_Reference_Rate,
+                ISNULL(
+                    CASE 
+                        WHEN m.IsSyariah = 'N' THEN k.interest_reference_rate_group
+                        WHEN m.IsSyariah = 'Y' THEN s.interest_reference_rate_group
+                    END, 
+                    m.Interest_Reference_Rate
+                ) AS Interest_Reference_Rate_Group,
+                
                 CASE
                     WHEN m.IsSyariah = 'N' THEN 
-                        ISNULL(k.interest_reference_rate_group, m.Interest_Reference_Rate)
+                        ISNULL(k.interest_reference_rate_ssot, k.interest_reference_rate_group)
                     WHEN m.IsSyariah = 'Y' THEN
-                        CASE 
-                            WHEN s.interest_reference_rate_ssot IS NOT NULL
-                                THEN s.interest_reference_rate_ssot
-                            ELSE m.Interest_Reference_Rate
-                        END
-                END AS Interest_Reference_Rate_Group,
+                        ISNULL(s.interest_reference_rate_ssot, s.interest_reference_rate_group)
+                END AS Interest_Reference_Rate_SSOT,
                 m.Maturity_Date,
                 m.Start_Date_Facility,
                 m.Category,
