@@ -75,9 +75,17 @@ def api_data():
                 
                 CASE
                     WHEN m.IsSyariah = 'N' THEN 
-                        ISNULL(k.interest_reference_rate_ssot, k.interest_reference_rate_group)
+                        CASE 
+                            WHEN k.interest_reference_rate_ssot IS NULL THEN
+                                ISNULL(k.interest_reference_rate_group, m.Interest_Reference_Rate)
+                            ELSE k.interest_reference_rate_ssot
+                        END
                     WHEN m.IsSyariah = 'Y' THEN
-                        ISNULL(s.interest_reference_rate_ssot, s.interest_reference_rate_group)
+                        CASE 
+                            WHEN s.interest_reference_rate_ssot IS NULL THEN
+                                ISNULL(s.interest_reference_rate_group, m.Interest_Reference_Rate)
+                            ELSE s.interest_reference_rate_ssot
+                        END
                 END AS Interest_Reference_Rate_SSOT
                 
             FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
@@ -193,9 +201,17 @@ def api_download_data():
                 
                 CASE
                     WHEN m.IsSyariah = 'N' THEN 
-                        ISNULL(k.interest_reference_rate_ssot, k.interest_reference_rate_group)
+                        CASE 
+                            WHEN k.interest_reference_rate_ssot IS NULL THEN
+                                ISNULL(k.interest_reference_rate_group, m.Interest_Reference_Rate)
+                            ELSE k.interest_reference_rate_ssot
+                        END
                     WHEN m.IsSyariah = 'Y' THEN
-                        ISNULL(s.interest_reference_rate_ssot, s.interest_reference_rate_group)
+                        CASE 
+                            WHEN s.interest_reference_rate_ssot IS NULL THEN
+                                ISNULL(s.interest_reference_rate_group, m.Interest_Reference_Rate)
+                            ELSE s.interest_reference_rate_ssot
+                        END
                 END AS Interest_Reference_Rate_SSOT,
                 m.Maturity_Date,
                 m.Start_Date_Facility,
