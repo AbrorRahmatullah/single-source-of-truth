@@ -65,14 +65,23 @@ def api_data():
         data_query = f"""
             SELECT 
                 m.*,
-                CASE 
-                    WHEN m.Interest_Reference_Rate IS NULL OR m.Interest_Reference_Rate = ''
-                        THEN 'FIXED'
-                    ELSE r.interest_reference_rate_group
+                CASE
+                    WHEN m.IsSyariah = 'N' THEN 
+                        ISNULL(k.interest_reference_rate_group, m.Interest_Reference_Rate)
+                    WHEN m.IsSyariah = 'Y' THEN
+                        CASE 
+                            WHEN s.interest_reference_rate_ssot IS NOT NULL
+                                THEN s.interest_reference_rate_ssot
+                            ELSE m.Interest_Reference_Rate
+                        END
                 END AS Interest_Reference_Rate_Group
             FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
-            LEFT JOIN MasterInterestReferenceRate r
-                ON m.Interest_Reference_Rate = r.interest_reference_rate
+            LEFT JOIN MasterInterestReferenceRateKonven k
+                ON m.IsSyariah = 'N'
+                AND m.Interest_Reference_Rate = k.interest_reference_rate
+            LEFT JOIN MasterInterestReferenceRateSyariah s
+                ON m.IsSyariah = 'Y'
+                AND m.Interest_Reference_Rate = s.interest_reference_rate_group
             {where_clause}
             ORDER BY m.Tanggal_Data DESC
             OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
@@ -131,6 +140,7 @@ def api_download_data():
         query = f"""
             SELECT 
                 m.Tanggal_Data,
+                m.IsSyariah,
                 m.Facility_No,
                 m.Customer_Name_SLIK,
                 m.Alias,
@@ -168,13 +178,16 @@ def api_download_data():
                 m.Interest_Rate,
                 m.Interest_Type,
                 m.Interest_Reference_Rate,
-
                 CASE
-                    WHEN m.Interest_Reference_Rate IS NULL OR m.Interest_Reference_Rate = ''
-                        THEN 'FIXED'
-                    ELSE r.interest_reference_rate_group
+                    WHEN m.IsSyariah = 'N' THEN 
+                        ISNULL(k.interest_reference_rate_group, m.Interest_Reference_Rate)
+                    WHEN m.IsSyariah = 'Y' THEN
+                        CASE 
+                            WHEN s.interest_reference_rate_ssot IS NOT NULL
+                                THEN s.interest_reference_rate_ssot
+                            ELSE m.Interest_Reference_Rate
+                        END
                 END AS Interest_Reference_Rate_Group,
-
                 m.Maturity_Date,
                 m.Start_Date_Facility,
                 m.Category,
@@ -198,14 +211,16 @@ def api_download_data():
                 m.CKPN,
                 m.Flag_Penjaminan,
                 m.Flag_Penugasan,
-                m.isSyariah,
                 m.load_date
             FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
-            LEFT JOIN MasterInterestReferenceRate r
-                ON m.Interest_Reference_Rate = r.interest_reference_rate
+            LEFT JOIN MasterInterestReferenceRateKonven k
+                ON m.IsSyariah = 'N'
+                AND m.Interest_Reference_Rate = k.interest_reference_rate
+            LEFT JOIN MasterInterestReferenceRateSyariah s
+                ON m.IsSyariah = 'Y'
+                AND m.Interest_Reference_Rate = s.interest_reference_rate_group
             {where_clause}
             ORDER BY m.Tanggal_Data DESC
-
         """
 
         cursor.execute(query, params)
