@@ -67,7 +67,11 @@ def api_data():
                 m.*,
                 ISNULL(
                     CASE 
-                        WHEN m.IsSyariah = 'N' THEN k.interest_reference_rate_group
+                        WHEN m.IsSyariah = 'N' THEN 
+                            CASE 
+                                WHEN k.interest_reference_rate IS NULL THEN 'FIXED'
+                                ELSE k.interest_reference_rate
+                            END
                         WHEN m.IsSyariah = 'Y' THEN s.interest_reference_rate_group
                     END, 
                     m.Interest_Reference_Rate
@@ -76,8 +80,7 @@ def api_data():
                 CASE
                     WHEN m.IsSyariah = 'N' THEN 
                         CASE 
-                            WHEN k.interest_reference_rate_ssot IS NULL THEN
-                                ISNULL(k.interest_reference_rate_group, m.Interest_Reference_Rate)
+                            WHEN k.interest_reference_rate_ssot IS NULL THEN 'FIXED'
                             ELSE k.interest_reference_rate_ssot
                         END
                     WHEN m.IsSyariah = 'Y' THEN
@@ -190,10 +193,13 @@ def api_download_data():
                 m.Currency,
                 m.Interest_Rate,
                 m.Interest_Type,
-                m.Interest_Reference_Rate,
                 ISNULL(
                     CASE 
-                        WHEN m.IsSyariah = 'N' THEN k.interest_reference_rate_group
+                        WHEN m.IsSyariah = 'N' THEN 
+                            CASE 
+                                WHEN k.interest_reference_rate IS NULL THEN 'FIXED'
+                                ELSE k.interest_reference_rate
+                            END
                         WHEN m.IsSyariah = 'Y' THEN s.interest_reference_rate_group
                     END, 
                     m.Interest_Reference_Rate
@@ -202,8 +208,7 @@ def api_download_data():
                 CASE
                     WHEN m.IsSyariah = 'N' THEN 
                         CASE 
-                            WHEN k.interest_reference_rate_ssot IS NULL THEN
-                                ISNULL(k.interest_reference_rate_group, m.Interest_Reference_Rate)
+                            WHEN k.interest_reference_rate_ssot IS NULL THEN 'FIXED'
                             ELSE k.interest_reference_rate_ssot
                         END
                     WHEN m.IsSyariah = 'Y' THEN
