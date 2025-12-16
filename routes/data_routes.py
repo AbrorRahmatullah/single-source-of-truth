@@ -70,7 +70,7 @@ def api_data():
                         WHEN m.IsSyariah = 'N' THEN 
                             CASE 
                                 WHEN k.interest_reference_rate IS NULL THEN 'FIXED'
-                                ELSE k.interest_reference_rate
+                                ELSE k.interest_reference_rate_group
                             END
                         WHEN m.IsSyariah = 'Y' THEN s.interest_reference_rate_group
                     END, 
@@ -198,7 +198,7 @@ def api_download_data():
                         WHEN m.IsSyariah = 'N' THEN 
                             CASE 
                                 WHEN k.interest_reference_rate IS NULL THEN 'FIXED'
-                                ELSE k.interest_reference_rate
+                                ELSE k.interest_reference_rate_group
                             END
                         WHEN m.IsSyariah = 'Y' THEN s.interest_reference_rate_group
                     END, 
