@@ -94,10 +94,12 @@ def api_data():
             FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
             LEFT JOIN MasterInterestReferenceRateKonven k
                 ON m.IsSyariah = 'N'
-                AND m.Interest_Reference_Rate = k.interest_reference_rate
+                AND (REPLACE(m.Interest_Reference_Rate, ' ', '') = REPLACE(k.interest_reference_rate, ' ', '')
+                OR m.Interest_Reference_Rate = k.interest_reference_rate_group)
             LEFT JOIN MasterInterestReferenceRateSyariah s
                 ON m.IsSyariah = 'Y'
-                AND m.Interest_Reference_Rate = s.interest_reference_rate_group
+                AND (REPLACE(m.Interest_Reference_Rate, ' ', '') = REPLACE(s.interest_reference_rate_group, ' ', '')
+                OR m.Interest_Reference_Rate = s.interest_reference_rate_group)
             {where_clause}
             ORDER BY m.Tanggal_Data DESC
             OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
@@ -245,10 +247,12 @@ def api_download_data():
             FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
             LEFT JOIN MasterInterestReferenceRateKonven k
                 ON m.IsSyariah = 'N'
-                AND m.Interest_Reference_Rate = k.interest_reference_rate
+                AND (REPLACE(m.Interest_Reference_Rate, ' ', '') = REPLACE(k.interest_reference_rate, ' ', '')
+                OR m.Interest_Reference_Rate = k.interest_reference_rate_group)
             LEFT JOIN MasterInterestReferenceRateSyariah s
                 ON m.IsSyariah = 'Y'
-                AND m.Interest_Reference_Rate = s.interest_reference_rate_group
+                AND (REPLACE(m.Interest_Reference_Rate, ' ', '') = REPLACE(s.interest_reference_rate_group, ' ', '')
+                OR m.Interest_Reference_Rate = s.interest_reference_rate_group)
             {where_clause}
             ORDER BY m.Tanggal_Data DESC
         """
