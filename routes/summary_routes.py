@@ -1,7 +1,7 @@
-from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for
+from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for, send_file
 from datetime import datetime
 import logging
-
+import os
 
 from models.audit import insert_audit_trail
 from config.config import get_db_connection
@@ -73,18 +73,29 @@ def api_summary():
         query_get_template_name = f"""
             DECLARE @FilterDate DATE = '{tanggal_data}';
             DECLARE @SQL NVARCHAR(MAX);
-            SELECT @SQL = STRING_AGG(
-                'SELECT ' 
-                + 'CAST(@FilterDate AS DATE) AS PERIOD_DATE, '
-                + '''' + template_name + ''' AS template_name, '
-                + '''' + division_name + ''' AS division_name, '
-                + 'COUNT(t.PERIOD_DATE) AS JUMLAH_DATA, '
-                + 'CASE WHEN COUNT(t.PERIOD_DATE) > 1 THEN ''TERSEDIA'' ELSE ''BELUM TERSEDIA'' END AS STATUS '
-                + 'FROM ' + QUOTENAME(template_name) + ' t '
-                + 'WHERE CAST(t.PERIOD_DATE AS DATE) = @FilterDate',
-                ' UNION ALL '
-            )
-            FROM MasterCreator;
+            SELECT 
+                @SQL = STRING_AGG(
+                    'SELECT '
+                    + 'CAST(@FilterDate AS DATE) AS PERIOD_DATE, '
+                    + '''' + c.template_name + ''' AS template_name, '
+                    + '''' + c.division_name + ''' AS division_name, '
+                    + '''' + CONVERT(VARCHAR(10), u.upload_date, 120) + ''' AS upload_date, '
+                    + 'COUNT(t.PERIOD_DATE) AS JUMLAH_DATA, '
+                    + 'CASE WHEN COUNT(t.PERIOD_DATE) > 1 '
+                    + 'THEN ''TERSEDIA'' ELSE ''BELUM TERSEDIA'' END AS STATUS '
+                    + 'FROM ' + QUOTENAME(c.template_name) + ' t '
+                    + 'WHERE CAST(t.PERIOD_DATE AS DATE) = @FilterDate'
+                , ' UNION ALL ')
+            FROM MasterCreator c
+            LEFT JOIN (
+                SELECT 
+                    template,
+                    MAX(upload_date) AS upload_date
+                FROM MasterUploader
+                WHERE CAST(period_date AS DATE) = @FilterDate
+                GROUP BY template
+            ) u
+                ON c.template_name = u.template;
             EXEC sp_executesql @SQL, N'@FilterDate DATE', @FilterDate=@FilterDate;
         """
 
@@ -95,8 +106,9 @@ def api_summary():
             'period_date': row[0].strftime('%Y-%m-%d') if row[0] else None,
             'template_name': row[1],
             'division_name': row[2],
-            'jumlah_data': row[3],
-            'status': row[4]
+            'upload_date': row[3],
+            'jumlah_data': row[4],
+            'status': row[5]
         } for row in rows]
 
         total_records = len(data)
@@ -121,3 +133,78 @@ def api_summary():
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
+
+@summary_bp.route('/api/download-file', methods=['GET'])
+def download_file():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'}), 401
+    
+    try:
+        template_name = request.args.get('template')
+        period_date = request.args.get('period_date')
+        
+        if not template_name or not period_date:
+            return jsonify({'success': False, 'message': 'Template dan periode harus diisi.'}), 400
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Query untuk mendapatkan file_upload path
+        query = """
+            SELECT TOP 1 file_upload, upload_date
+            FROM MasterUploader
+            WHERE template = ? 
+            AND CAST(period_date AS DATE) = CAST(? AS DATE)
+            ORDER BY upload_date DESC
+        """
+        
+        cursor.execute(query, (template_name, period_date))
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        if not result:
+            return jsonify({'success': False, 'message': 'File tidak ditemukan di database.'}), 404
+        
+        file_path = result[0]
+        
+        # Normalisasi path (ganti backslash jadi forward slash untuk compatibility)
+        file_path = file_path.replace('\\', '/')
+        
+        # Cek apakah file ada di server
+        if not os.path.exists(file_path):
+            # Coba alternatif path jika ada
+            alt_path = os.path.join(os.getcwd(), file_path)
+            if os.path.exists(alt_path):
+                file_path = alt_path
+            else:
+                logger.error(f"File not found: {file_path}")
+                return jsonify({'success': False, 'message': f'File tidak ada di server.'}), 404
+        
+        # Log audit trail
+        insert_audit_trail('download_file', 
+            f"User '{session.get('username')}' downloaded file: {os.path.basename(file_path)}")
+        
+        # Dapatkan nama file original
+        filename = os.path.basename(file_path)
+        
+        # Tentukan mimetype berdasarkan ekstensi
+        mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        if file_path.lower().endswith('.xls'):
+            mimetype = 'application/vnd.ms-excel'
+        elif file_path.lower().endswith('.csv'):
+            mimetype = 'text/csv'
+        
+        return send_file(
+            file_path,
+            mimetype=mimetype,
+            as_attachment=True,
+            download_name=filename
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading file: {str(e)}")
+        insert_audit_trail('download_file_failed',
+            f"User '{session.get('username')}' failed to download file: {str(e)}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500

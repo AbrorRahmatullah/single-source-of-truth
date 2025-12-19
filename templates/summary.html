@@ -80,6 +80,63 @@
         return `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
     }
 
+    function downloadFile(templateName, periodDate, status) {
+        if (status !== 'TERSEDIA') {
+            alert('File belum tersedia untuk didownload.');
+            return;
+        }
+
+        const url = `/api/download-file?template=${encodeURIComponent(templateName)}&period_date=${encodeURIComponent(periodDate)}`;
+        
+        // Tampilkan loading
+        const btn = event.target;
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<span style="font-size:0.85em;">⏳ Downloading...</span>';
+        btn.disabled = true;
+
+        fetch(url)
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.message || 'Download gagal');
+                    });
+                }
+                
+                // Dapatkan filename dari header
+                const contentDisposition = response.headers.get('content-disposition');
+                let filename = 'download.xlsx';
+                if (contentDisposition) {
+                    const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(contentDisposition);
+                    if (matches != null && matches[1]) {
+                        filename = matches[1].replace(/['"]/g, '');
+                    }
+                }
+                
+                // Return both blob and filename
+                return response.blob().then(blob => ({ blob, filename }));
+            })
+            .then(({ blob, filename }) => {
+                // Create download link
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(downloadUrl);
+                document.body.removeChild(a);
+
+                // Restore button
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            })
+            .catch(error => {
+                alert('Error: ' + error.message);
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            });
+    }
+
     function renderSummaryTable() {
         const wrapper = document.getElementById('summaryDataTableWrapper');
         if (!summaryData.length) {
@@ -87,18 +144,20 @@
             return;
         }
 
-        const columnOrder = ['period_date', 'template_name', 'division_name', 'jumlah_data', 'status'];
+        const columnOrder = ['period_date', 'template_name', 'division_name', 'upload_date', 'jumlah_data', 'status', 'action'];
         const columnLabels = {
             'period_date': 'Periode',
             'template_name': 'Nama Template',
             'division_name': 'Divisi',
+            'upload_date': 'Tanggal Upload',
             'jumlah_data': 'Jumlah Data',
-            'status': 'Status'
+            'status': 'Status',
+            'action': 'Aksi'
         };
 
         let html = `<div style="max-height:500px;overflow-y:auto;">
-                    <table style="min-width:700px;width:100%;font-size:0.95rem;border-collapse:collapse;">
-                    <thead style="background:#f1f5f9;">
+                    <table style="min-width:800px;width:100%;font-size:0.95rem;border-collapse:collapse;">
+                    <thead style="background:#f1f5f9;position:sticky;top:0;z-index:10;">
                     <tr>`;
         columnOrder.forEach(col => {
             html += `<th style="padding:10px 8px;border-bottom:2px solid #e5e7eb;text-align:left;font-weight:600;color:#334155;white-space:nowrap;">
@@ -106,12 +165,14 @@
         });
         html += '</tr></thead><tbody>';
 
-        summaryData.forEach(row => {
+        summaryData.forEach((row, idx) => {
             html += '<tr style="border-bottom:1px solid #e5e7eb;">';
             columnOrder.forEach(col => {
                 let val = row[col];
-                if (col === 'period_date') val = formatMonthYear(val);
-                if (col === 'status') {
+                
+                if (col === 'period_date') {
+                    val = formatMonthYear(val);
+                } else if (col === 'status') {
                     if (val === 'TERSEDIA') {
                         val = `<span style='vertical-align:middle;'>${val}</span>
                                <span style='color:#22c55e;font-size:1.1em;font-weight:bold;vertical-align:middle;' title='Tersedia'>&#10003;</span>`;
@@ -119,7 +180,21 @@
                         val = `<span style='vertical-align:middle;'>${val}</span>
                                <span style='color:#ef4444;font-size:1.1em;font-weight:bold;vertical-align:middle;' title='Belum Tersedia'>&#10007;</span>`;
                     }
+                } else if (col === 'action') {
+                    const isAvailable = row.status === 'TERSEDIA';
+                    const btnStyle = isAvailable 
+                        ? 'background:#3b82f6;color:white;border:none;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:0.85em;'
+                        : 'background:#d1d5db;color:#9ca3af;border:none;padding:5px 12px;border-radius:4px;cursor:not-allowed;font-size:0.85em;';
+                    
+                    val = `<button 
+                            style="${btnStyle}" 
+                            onclick="downloadFile('${row.template_name}', '${row.period_date}', '${row.status}')"
+                            ${!isAvailable ? 'disabled' : ''}
+                            title="${isAvailable ? 'Download file' : 'File belum tersedia'}">
+                            📥 Download
+                        </button>`;
                 }
+                
                 html += `<td style="padding:8px 8px;border-right:1px solid #f3f4f6;white-space:nowrap;">${val ?? ''}</td>`;
             });
             html += '</tr>';
