@@ -304,4 +304,54 @@ def check_email():
         if cursor:
             cursor.close()
         if conn:
-            conn.close()             
+            conn.close()
+
+@user_bp.route('/users/<int:id>/reset-password', methods=['POST'])
+def reset_password(id):
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+
+    data = request.get_json()
+    new_password = data.get('new_password')
+
+    if not new_password:
+        return jsonify({'success': False, 'message': 'Password is required'})
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Check if user exists
+        cursor.execute("SELECT username FROM MasterUsers WHERE id = ?", (id,))
+        result = cursor.fetchone()
+
+        if not result:
+            return jsonify({'success': False, 'message': 'User not found'})
+
+        username = result[0]
+
+        # Generate hashed password
+        password_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
+
+        # Update password
+        cursor.execute("""
+            UPDATE MasterUsers
+            SET password_hash = ?
+            WHERE id = ?
+        """, (password_hash, id))
+
+        conn.commit()
+        insert_audit_trail('reset_password', f"User '{session.get('username')}' reset password for user '{username}'.")
+        return jsonify({
+            'success': True,
+            'message': f'Password for user "{username}" has been reset successfully'
+        })
+
+    except Exception as e:
+        insert_audit_trail('reset_password_failed', f"User '{session.get('username')}' failed to reset password for user ID {id}: {str(e)}")
+        return jsonify({'success': False, 'message': 'Error resetting password'})
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()

@@ -47,6 +47,7 @@
 
         {% include 'modals/create_user_modal.html' %}
         {% include 'modals/edit_user_modal.html' %}
+        {% include 'modals/reset_password_user_modal.html' %}
     </div>
 </div>
 
@@ -127,7 +128,8 @@
                         u.division,
                         u.role_access,
                         `<button class="btn btn-sm btn-warning" onclick="editUser(${u.id})">Edit</button>
-                         <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id}, '${u.username}')">Delete</button>`
+                         <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id}, '${u.username}')">Delete</button>
+                         <button class="btn btn-sm btn-info" onclick="showResetPasswordModal(${u.id}, '${u.username}')">Reset Password</button>`
                     ]);
                 });
                 table.draw();
@@ -415,6 +417,38 @@
             });
     }
 
+    function showResetPasswordModal(id, username) {
+        document.getElementById('reset_user_id').value = id;
+        document.getElementById('reset_username').value = username;
+        document.getElementById('reset_new_password').value = '';
+        document.getElementById('reset_confirm_password').value = '';
+        document.getElementById('reset_password_error').textContent = '';
+        document.getElementById('resetPasswordBtn').disabled = false;
+        new bootstrap.Modal(document.getElementById('resetPasswordModal')).show();
+    }
+
+    function checkResetPassword(newPassword, confirmPassword) {
+        const errorElement = document.getElementById('reset_password_error');
+        const submitBtn = document.getElementById('resetPasswordBtn');
+
+        // Reset error
+        errorElement.textContent = '';
+
+        if (newPassword !== confirmPassword) {
+            errorElement.textContent = 'Password dan konfirmasi password tidak sama';
+            errorElement.style.color = 'red';
+            errorElement.style.fontSize = '12px';
+            errorElement.style.marginTop = '5px';
+        } else {
+            errorElement.textContent = '';
+        }
+
+        // Disable tombol jika ada error
+        if (submitBtn) {
+            submitBtn.disabled = !!errorElement.textContent;
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         $('#usersDataTable').DataTable({
             "pageLength": 10,
@@ -488,6 +522,58 @@
             });
             passwordConfirmInput.addEventListener('input', function() {
                 checkPassword(passwordInput.value, passwordConfirmInput.value, 'password_error', 'createUserBtn');
+            });
+        }
+
+        // Reset password form submission
+        document.getElementById('resetPasswordForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const id = document.getElementById('reset_user_id').value;
+            const newPassword = document.getElementById('reset_new_password').value;
+            const confirmPassword = document.getElementById('reset_confirm_password').value;
+
+            // Validation
+            if (!newPassword || !confirmPassword) {
+                showAlert('danger', 'All fields are required');
+                return;
+            }
+
+            if (newPassword !== confirmPassword) {
+                showAlert('danger', 'Passwords do not match');
+                return;
+            }
+
+            fetch(`/users/${id}/reset-password`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ new_password: newPassword })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    bootstrap.Modal.getInstance(document.getElementById('resetPasswordModal')).hide();
+                    showSuccessModal(document.getElementById('reset_username').value, 'User password', 'updated');
+                    loadUsers();
+                } else {
+                    showAlert('danger', data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error resetting password:', error);
+                showAlert('danger', 'Error resetting password');
+            });
+        });
+
+        // Password validation untuk reset password
+        const resetNewPasswordInput = document.getElementById('reset_new_password');
+        const resetConfirmPasswordInput = document.getElementById('reset_confirm_password');
+        if (resetNewPasswordInput && resetConfirmPasswordInput) {
+            resetNewPasswordInput.addEventListener('input', function() {
+                checkResetPassword(resetNewPasswordInput.value, resetConfirmPasswordInput.value);
+            });
+            resetConfirmPasswordInput.addEventListener('input', function() {
+                checkResetPassword(resetNewPasswordInput.value, resetConfirmPasswordInput.value);
             });
         }
     });
