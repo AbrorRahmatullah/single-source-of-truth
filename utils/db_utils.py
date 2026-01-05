@@ -374,19 +374,19 @@ def get_data_count_by_period(table_name):
 def get_master_divisions_tables():
     conn = None
     cursor = None
-    
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         cursor.execute("""
-            SELECT division_name 
+            SELECT division_name
             FROM MasterDivisions
         """)
-        
+
         tables = cursor.fetchall()
         return [table[0] for table in tables]
-        
+
     except Exception as e:
         logger.error(f"Error getting template tables: {str(e)}")
         return []
@@ -395,3 +395,61 @@ def get_master_divisions_tables():
             cursor.close()
         if conn:
             conn.close()
+
+def check_master_uploader_by_date(filter_date):
+    """
+    Check MasterUploader table for templates with latest upload dates on a given filter date.
+    This function retrieves template upload information for the specified period_date.
+
+    Args:
+        filter_date (str or date): The filter date in format 'YYYY-MM-DD' or date object
+
+    Returns:
+        list: List of dictionaries containing:
+            - template: Template name
+            - upload_date: Maximum upload date for that template
+        Returns empty list if no data found or on error
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Convert filter_date to string if it's a date object
+        if isinstance(filter_date, (date, datetime)):
+            filter_date_str = filter_date.strftime('%Y-%m-%d')
+        else:
+            filter_date_str = str(filter_date)
+
+        query = """
+            SELECT
+                template,
+                MAX(upload_date) AS upload_date
+            FROM MasterUploader
+            WHERE CAST(period_date AS DATE) = CAST(? AS DATE)
+            GROUP BY template
+        """
+
+        cursor.execute(query, (filter_date_str,))
+        rows = cursor.fetchall()
+
+        results = []
+        for row in rows:
+            results.append({
+                'template': row[0],
+                'upload_date': row[1].strftime('%Y-%m-%d %H:%M:%S') if row[1] else None
+            })
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Error checking master uploader by date '{filter_date}': {str(e)}")
+        return []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+

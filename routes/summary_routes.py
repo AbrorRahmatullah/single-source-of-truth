@@ -5,6 +5,7 @@ import os
 
 from models.audit import insert_audit_trail
 from config.config import get_db_connection
+from utils.db_utils import check_master_uploader_by_date
 
 summary_bp = Blueprint('summary', __name__)
 logger = logging.getLogger(__name__)
@@ -28,6 +29,9 @@ def summary_page():
 def api_summary():
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first.'})
+
+    conn = None
+    cursor = None
 
     try:
         tanggal_data = request.args.get('tanggal_data')
@@ -65,51 +69,78 @@ def api_summary():
             # Jika input manual hanya YYYY-MM, tambahkan '-01'
             tanggal_data = tanggal_data + '-01'
 
+        # Check master uploader data for the given date
+        master_uploader_data = check_master_uploader_by_date(tanggal_data)
+
         # Pagination
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 50))
 
-        # Query utama
-        query_get_template_name = f"""
-            DECLARE @FilterDate DATE = '{tanggal_data}';
-            DECLARE @SQL NVARCHAR(MAX);
-            SELECT 
-                @SQL = STRING_AGG(
-                    'SELECT '
-                    + 'CAST(@FilterDate AS DATE) AS PERIOD_DATE, '
-                    + '''' + c.template_name + ''' AS template_name, '
-                    + '''' + c.division_name + ''' AS division_name, '
-                    + '''' + CONVERT(VARCHAR(10), u.upload_date, 120) + ''' AS upload_date, '
-                    + 'COUNT(t.PERIOD_DATE) AS JUMLAH_DATA, '
-                    + 'CASE WHEN COUNT(t.PERIOD_DATE) > 1 '
-                    + 'THEN ''TERSEDIA'' ELSE ''BELUM TERSEDIA'' END AS STATUS '
-                    + 'FROM ' + QUOTENAME(c.template_name) + ' t '
-                    + 'WHERE CAST(t.PERIOD_DATE AS DATE) = @FilterDate'
-                , ' UNION ALL ')
-            FROM MasterCreator c
-            LEFT JOIN (
-                SELECT 
-                    template,
-                    MAX(upload_date) AS upload_date
-                FROM MasterUploader
-                WHERE CAST(period_date AS DATE) = @FilterDate
-                GROUP BY template
-            ) u
-                ON c.template_name = u.template;
-            EXEC sp_executesql @SQL, N'@FilterDate DATE', @FilterDate=@FilterDate;
-        """
+        # Get all templates from MasterCreator
+        cursor.execute("""
+            SELECT template_name, division_name
+            FROM MasterCreator
+            ORDER BY template_name
+        """)
+        templates = cursor.fetchall()
 
-        cursor.execute(query_get_template_name)
-        rows = cursor.fetchall()
+        data = []
 
-        data = [{
-            'period_date': row[0].strftime('%Y-%m-%d') if row[0] else None,
-            'template_name': row[1],
-            'division_name': row[2],
-            'upload_date': row[3],
-            'jumlah_data': row[4],
-            'status': row[5]
-        } for row in rows]
+        # Process each template
+        for template in templates:
+            template_name = template[0]
+            division_name = template[1]
+
+            # Get upload date from master uploader data
+            upload_date = None
+            for uploader in master_uploader_data:
+                if uploader['template'] == template_name:
+                    upload_date = uploader['upload_date']
+                    break
+
+            # Get data count from template table
+            jumlah_data = 0
+            status = 'BELUM TERSEDIA'
+
+            try:
+                # Check if template table exists
+                count_query = f"""
+                    SELECT COUNT(*)
+                    FROM INFORMATION_SCHEMA.TABLES
+                    WHERE TABLE_NAME = ? AND TABLE_SCHEMA = 'dbo'
+                """
+                cursor.execute(count_query, (template_name,))
+                table_exists = cursor.fetchone()[0] > 0
+
+                if table_exists:
+                    # Get data count for the specified date
+                    data_query = f"""
+                        SELECT COUNT(*)
+                        FROM [{template_name}]
+                        WHERE CAST(PERIOD_DATE AS DATE) = CAST(? AS DATE)
+                    """
+                    cursor.execute(data_query, (tanggal_data,))
+                    jumlah_data = cursor.fetchone()[0]
+
+                    # Set status
+                    if jumlah_data > 0:
+                        status = 'TERSEDIA'
+                    else:
+                        status = 'BELUM TERSEDIA'
+
+            except Exception as table_error:
+                logger.warning(f"Error checking template {template_name}: {str(table_error)}")
+                status = 'BELUM TERSEDIA'
+                jumlah_data = 0
+
+            data.append({
+                'period_date': tanggal_data,
+                'template_name': template_name,
+                'division_name': division_name,
+                'upload_date': upload_date,
+                'jumlah_data': jumlah_data,
+                'status': status
+            })
 
         total_records = len(data)
         start = (page - 1) * page_size
@@ -122,7 +153,8 @@ def api_summary():
             'total': total_records,
             'page': page,
             'page_size': page_size,
-            'default_date_used': tanggal_data  # Kirim tanggal default ke frontend
+            'default_date_used': tanggal_data,
+            'master_uploader_info': master_uploader_data
         })
 
     except Exception as e:
