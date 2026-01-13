@@ -1418,3 +1418,82 @@ body {
     overflow-x: auto;
     margin-top: 12px;
 }
+
+/* Login Page Styles */
+.login-body {
+    height: 100vh;
+}
+
+.login-left-side {
+    background-color: #f8f9fa;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.login-left-side img {
+    max-width: 80%;
+    height: auto;
+}
+
+.login-right-side {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.login-form {
+    width: 100%;
+    max-width: 350px;
+}
+
+.password-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.password-input-field {
+    padding-right: 42px !important;
+}
+
+.password-toggle-icon {
+    position: absolute;
+    right: 12px;
+    cursor: pointer;
+    color: #6c757d;
+    background: none;
+    border: none;
+    padding: 6px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    height: 100%;
+    width: auto;
+    min-width: 35px;
+    border-radius: 4px;
+    top: 0;
+    padding: 8px 10px;
+}
+
+.eye-icon {
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    stroke-width: 2;
+}
+
+.password-toggle-icon:hover {
+    color: #188bb5;
+    background: rgba(24, 139, 181, 0.08);
+}
+
+.password-toggle-icon:active {
+    background: rgba(24, 139, 181, 0.15);
+}
+
+.password-toggle-icon:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(24, 139, 181, 0.1);
+}

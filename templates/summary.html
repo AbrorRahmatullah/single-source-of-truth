@@ -11,6 +11,9 @@
             <p class="content-subtitle">Centralized Insights for Streamlined Decision-Making</p>
         </div>
 
+        <!-- Analytics Dashboard Section -->
+        <div id="analyticsDashboard" style="margin-bottom:24px;"></div>
+
         <div class="card" style="padding:18px 20px;background:#f8fafc;border-radius:10px;box-shadow:0 1px 4px #e5e7eb;margin-bottom:18px;">
             <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;">
                 <div style="display:flex;align-items:center;gap:8px;">
@@ -223,9 +226,316 @@
         loadSummaryData(this.value);
     });
 
-    window.onload = function() {
+    // Analytics Dashboard Functions
+    let analyticsDashboardYear = new Date().getFullYear();
+
+    function handleYearChange(e) {
+        const newYear = parseInt(e.target.value);
+        console.log('Year change detected. New year:', newYear, 'Old year:', analyticsDashboardYear);
+        if (newYear !== analyticsDashboardYear) {
+            analyticsDashboardYear = newYear;
+            console.log('Loading analytics for year:', analyticsDashboardYear);
+            loadAnalyticsDashboard(analyticsDashboardYear);
+        }
+    }
+
+    function syncYearSelector() {
+        // Sync the year selector to match the current year (only on initial load)
+        const currentYear = new Date().getFullYear();
+        const yearSelector = document.getElementById('yearSelector');
+        if (yearSelector && parseInt(yearSelector.value) !== currentYear) {
+            yearSelector.value = currentYear;
+            analyticsDashboardYear = currentYear;
+        }
+    }
+
+    function updateYearSelectorToMatchData(year) {
+        // Update the selector to match the data being displayed (without triggering full reset)
+        const yearSelector = document.getElementById('yearSelector');
+        if (yearSelector && parseInt(yearSelector.value) !== year) {
+            yearSelector.value = year;
+        }
+    }
+
+    function renderAnalyticsDashboard(data) {
+        const dashboardContainer = document.getElementById('analyticsDashboard');
+
+        if (!data.success) {
+            dashboardContainer.innerHTML = `<div style="padding:20px;text-align:center;color:#ef4444;">Error loading analytics: ${data.message}</div>`;
+            return;
+        }
+
+        const summary = data.summary;
+        const loginData = data.login_monthly;
+        const trafficData = data.traffic_monthly;
+
+        let html = `
+            <!-- Summary Cards -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(250px, 1fr));gap:18px;margin-bottom:24px;">
+                <div class="card" style="padding:20px;color:black;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                    <div style="font-size:0.9rem;opacity:0.9;margin-bottom:8px;">Total Users</div>
+                    <div style="font-size:2.5rem;font-weight:700;margin-bottom:4px;">${summary.total_users.toLocaleString()}</div>
+                    <div style="font-size:0.85rem;opacity:0.8;">System Users</div>
+                </div>
+                <div class="card" style="padding:20px;color:black;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                    <div style="font-size:0.9rem;opacity:0.9;margin-bottom:8px;">Total Downloads</div>
+                    <div style="font-size:2.5rem;font-weight:700;margin-bottom:4px;">${summary.total_downloads.toLocaleString()}</div>
+                    <div style="font-size:0.85rem;opacity:0.8;">Files Downloaded</div>
+                </div>
+                <div class="card" style="padding:20px;color:black;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                    <div style="font-size:0.9rem;opacity:0.9;margin-bottom:8px;">Total Uploads</div>
+                    <div style="font-size:2.5rem;font-weight:700;margin-bottom:4px;">${summary.total_uploads.toLocaleString()}</div>
+                    <div style="font-size:0.85rem;opacity:0.8;">Files Uploaded</div>
+                </div>
+            </div>
+
+            <!-- Charts Section -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(500px, 1fr));gap:18px;margin-bottom:24px;">
+                <!-- Year Selector -->
+                <div style="grid-column:1 / -1;display:flex;gap:10px;align-items:center;">
+                    <label style="font-weight:600;color:#334155;">Select Year:</label>
+                    <select id="yearSelector" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-size:0.95rem;cursor:pointer;">
+                        <option value="2025">2025</option>
+                        <option value="2026" selected>2026</option>
+                    </select>
+                </div>
+
+                <!-- User Login Chart -->
+                <div class="card" style="padding:20px;background:#fff;border-radius:10px;box-shadow:0 1px 4px #e5e7eb;">
+                    <h3 style="margin:0 0 16px 0;color:#1f2937;font-size:1.1rem;">User Logins Per Month</h3>
+                    <canvas id="loginChart" height="300"></canvas>
+                </div>
+
+                <!-- Traffic Chart -->
+                <div class="card" style="padding:20px;background:#fff;border-radius:10px;box-shadow:0 1px 4px #e5e7eb;">
+                    <h3 style="margin:0 0 16px 0;color:#1f2937;font-size:1.1rem;">Downloads & Uploads Per Month</h3>
+                    <canvas id="trafficChart" height="300"></canvas>
+                </div>
+            </div>
+        `;
+
+        dashboardContainer.innerHTML = html;
+
+        // Draw charts using vanilla JavaScript (Canvas API)
+        drawLoginChart(loginData);
+        drawTrafficChart(trafficData);
+
+        // Add year selector event listener
+        setTimeout(function() {
+            const yearSelector = document.getElementById('yearSelector');
+            if (yearSelector) {
+                // Remove any existing listeners first to avoid duplicates
+                const newSelector = yearSelector.cloneNode(true);
+                yearSelector.parentNode.replaceChild(newSelector, yearSelector);
+
+                newSelector.addEventListener('change', handleYearChange, false);
+                console.log('Year selector event listener attached');
+                console.log('Current year selector value:', newSelector.value);
+                console.log('Actual year:', new Date().getFullYear());
+
+                // Update selector to match the data year being displayed
+                updateYearSelectorToMatchData(data.year);
+            }
+        }, 50);
+    }
+
+    function drawLoginChart(data) {
+        const canvas = document.getElementById('loginChart');
+        const ctx = canvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = 300;
+
+        const padding = 50;
+        const chartWidth = canvas.width - padding * 2;
+        const chartHeight = canvas.height - padding * 2;
+
+        // Find max value for scaling
+        const maxValue = Math.max(...data.map(d => d.count), 1);
+        const scale = chartHeight / maxValue;
+
+        // Draw background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw axes
+        ctx.strokeStyle = '#d1d5db';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(padding, padding);
+        ctx.lineTo(padding, canvas.height - padding);
+        ctx.lineTo(canvas.width - padding, canvas.height - padding);
+        ctx.stroke();
+
+        // Draw grid lines and labels
+        ctx.font = '12px Arial';
+        ctx.fillStyle = '#6b7280';
+        ctx.textAlign = 'center';
+
+        const barWidth = chartWidth / data.length;
+
+        data.forEach((d, i) => {
+            const x = padding + i * barWidth + barWidth / 2;
+            const y = canvas.height - padding - d.count * scale;
+            const barHeight = d.count * scale;
+
+            // Draw bar
+            ctx.fillStyle = '#667eea';
+            ctx.fillRect(x - barWidth * 0.35, y, barWidth * 0.7, barHeight);
+
+            // Draw month label
+            ctx.fillStyle = '#6b7280';
+            ctx.fillText(d.month.substring(0, 3), x, canvas.height - padding + 20);
+
+            // Draw value on top
+            if (d.count > 0) {
+                ctx.fillStyle = '#1f2937';
+                ctx.font = 'bold 12px Arial';
+                ctx.fillText(d.count, x, y - 5);
+                ctx.font = '12px Arial';
+            }
+        });
+
+        // Draw Y-axis labels
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#6b7280';
+        for (let i = 0; i <= 5; i++) {
+            const value = Math.round((maxValue / 5) * i);
+            const y = canvas.height - padding - (value * scale);
+            ctx.fillText(value, padding - 10, y + 4);
+        }
+    }
+
+    function drawTrafficChart(data) {
+        const canvas = document.getElementById('trafficChart');
+        const ctx = canvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = 300;
+
+        const padding = 50;
+        const chartWidth = canvas.width - padding * 2;
+        const chartHeight = canvas.height - padding * 2;
+
+        // Find max value for scaling
+        const maxValue = Math.max(...data.flatMap(d => [d.downloads, d.uploads]), 1);
+        const scale = chartHeight / maxValue;
+
+        // Draw background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw axes
+        ctx.strokeStyle = '#d1d5db';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(padding, padding);
+        ctx.lineTo(padding, canvas.height - padding);
+        ctx.lineTo(canvas.width - padding, canvas.height - padding);
+        ctx.stroke();
+
+        // Draw grid lines and labels
+        ctx.font = '12px Arial';
+        ctx.fillStyle = '#6b7280';
+        ctx.textAlign = 'center';
+
+        const barWidth = chartWidth / (data.length * 2.5);
+
+        data.forEach((d, i) => {
+            const centerX = padding + i * (barWidth * 2.5) + barWidth * 1.25;
+            const downloadY = canvas.height - padding - d.downloads * scale;
+            const uploadY = canvas.height - padding - d.uploads * scale;
+            const downloadHeight = d.downloads * scale;
+            const uploadHeight = d.uploads * scale;
+
+            // Draw download bar
+            ctx.fillStyle = '#f093fb';
+            ctx.fillRect(centerX - barWidth * 0.6, downloadY, barWidth * 0.5, downloadHeight);
+
+            // Draw upload bar
+            ctx.fillStyle = '#4facfe';
+            ctx.fillRect(centerX - barWidth * 0.05, uploadY, barWidth * 0.5, uploadHeight);
+
+            // Draw month label
+            ctx.fillStyle = '#6b7280';
+            ctx.fillText(d.month.substring(0, 3), centerX - barWidth * 0.3, canvas.height - padding + 20);
+
+            // Draw values on top
+            if (d.downloads > 0) {
+                ctx.fillStyle = '#ec4899';
+                ctx.font = 'bold 10px Arial';
+                ctx.fillText(d.downloads, centerX - barWidth * 0.35, downloadY - 5);
+            }
+            if (d.uploads > 0) {
+                ctx.fillStyle = '#0ea5e9';
+                ctx.font = 'bold 10px Arial';
+                ctx.fillText(d.uploads, centerX + barWidth * 0.15, uploadY - 5);
+            }
+        });
+
+        // Draw Y-axis labels
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '12px Arial';
+        for (let i = 0; i <= 5; i++) {
+            const value = Math.round((maxValue / 5) * i);
+            const y = canvas.height - padding - (value * scale);
+            ctx.fillText(value, padding - 10, y + 4);
+        }
+
+        // Draw legend
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#f093fb';
+        ctx.fillRect(padding + 10, padding + 10, 15, 15);
+        ctx.fillStyle = '#1f2937';
+        ctx.fillText('Downloads', padding + 30, padding + 22);
+
+        ctx.fillStyle = '#4facfe';
+        ctx.fillRect(padding + 150, padding + 10, 15, 15);
+        ctx.fillStyle = '#1f2937';
+        ctx.fillText('Uploads', padding + 170, padding + 22);
+    }
+
+    function loadAnalyticsDashboard(year) {
+        fetch(`/api/analytics-dashboard?year=${year}`)
+            .then(res => res.json())
+            .then(data => renderAnalyticsDashboard(data))
+            .catch(err => {
+                console.error('Error loading analytics:', err);
+                document.getElementById('analyticsDashboard').innerHTML =
+                    `<div style="padding:20px;text-align:center;color:#ef4444;">Error loading analytics dashboard</div>`;
+            });
+    }
+
+    let isFirstLoad = true;
+
+    function initializePage() {
+        console.log('Initializing page with year:', analyticsDashboardYear);
+
+        // On first load, sync year selector to current year
+        if (isFirstLoad) {
+            syncYearSelector();
+            isFirstLoad = false;
+        }
+
+        // Load analytics dashboard
+        loadAnalyticsDashboard(analyticsDashboardYear);
+
         // Load data default dari backend (akan menentukan EOM otomatis)
         loadSummaryData();
+    }
+
+    // Use both onload and DOMContentLoaded for better compatibility
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializePage);
+    } else {
+        initializePage();
+    }
+
+    window.onload = function() {
+        // Additional initialization if needed
+        console.log('Window load event fired');
     };
 </script>
 {% endblock %}

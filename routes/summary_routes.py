@@ -1,7 +1,8 @@
 from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for, send_file
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import os
+from dateutil.relativedelta import relativedelta
 
 from models.audit import insert_audit_trail
 from config.config import get_db_connection
@@ -14,9 +15,9 @@ logger = logging.getLogger(__name__)
 def summary_page():
     if 'username' not in session:
         return redirect(url_for('auth.login'))
-    
+
     insert_audit_trail('view_summary', f"User '{session.get('username')}' accessed summary page.")
-    
+
     return render_template(
         'summary.html',
         username=session.get('username'),
@@ -24,7 +25,148 @@ def summary_page():
         division=session.get('division'),
         role_access=session.get('role_access')
     )
-            
+
+@summary_bp.route('/api/analytics-dashboard', methods=['GET'])
+def api_analytics_dashboard():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': 'Please log in first.'})
+
+    conn = None
+    cursor = None
+
+    try:
+        # Get year parameter (default: current year)
+        year = request.args.get('year', str(datetime.now().year), type=int)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 1. Total User Count (from MasterUsers)
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM MasterUsers
+        """)
+        total_users = cursor.fetchone()[0]
+
+        # 2. Total File Download Count (from SSOT_AUDIT_TRAILS where action = 'download_monthly_data')
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM SSOT_AUDIT_TRAILS
+            WHERE action = 'download_monthly_data'
+        """)
+        total_downloads = cursor.fetchone()[0]
+
+        # 3. Total File Upload Count (from MasterUploader)
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM MasterUploader
+        """)
+        total_uploads = cursor.fetchone()[0]
+
+        # 4. User Login Per Month for the specified year (Line Chart data)
+        cursor.execute("""
+            SELECT
+                MONTH(changed_at) as month,
+                COUNT(*) as login_count
+            FROM SSOT_AUDIT_TRAILS
+            WHERE action = 'login'
+            AND YEAR(changed_at) = ?
+            GROUP BY MONTH(changed_at)
+            ORDER BY MONTH(changed_at)
+        """, (year,))
+
+        login_data = cursor.fetchall()
+        login_monthly = {}
+        for row in login_data:
+            month = row[0]
+            count = row[1]
+            month_name = datetime(year, month, 1).strftime('%B')
+            login_monthly[month_name] = count
+
+        # Fill missing months with 0
+        month_names = ['January', 'February', 'March', 'April', 'May', 'June',
+                       'July', 'August', 'September', 'October', 'November', 'December']
+        login_monthly_data = [{'month': m, 'count': login_monthly.get(m, 0)} for m in month_names]
+
+        # 5. Download and Upload Per Month for the specified year (Double Bar Chart data)
+        # Download data from SSOT_AUDIT_TRAILS
+        cursor.execute("""
+            SELECT
+                MONTH(changed_at) as month,
+                COUNT(*) as download_count
+            FROM SSOT_AUDIT_TRAILS
+            WHERE action = 'download_monthly_data'
+            AND YEAR(changed_at) = ?
+            GROUP BY MONTH(changed_at)
+            ORDER BY MONTH(changed_at)
+        """, (year,))
+
+        download_data = cursor.fetchall()
+        download_monthly = {}
+        for row in download_data:
+            month = row[0]
+            count = row[1]
+            month_name = datetime(year, month, 1).strftime('%B')
+            download_monthly[month_name] = count
+
+        # Upload data from MasterUploader
+        cursor.execute("""
+            SELECT
+                MONTH(upload_date) as month,
+                COUNT(*) as upload_count
+            FROM MasterUploader
+            WHERE YEAR(upload_date) = ?
+            GROUP BY MONTH(upload_date)
+            ORDER BY MONTH(upload_date)
+        """, (year,))
+
+        upload_data = cursor.fetchall()
+        upload_monthly = {}
+        for row in upload_data:
+            month = row[0]
+            count = row[1]
+            month_name = datetime(year, month, 1).strftime('%B')
+            upload_monthly[month_name] = count
+
+        # Combine download and upload data
+        traffic_monthly = {}
+        for m in month_names:
+            traffic_monthly[m] = {
+                'downloads': download_monthly.get(m, 0),
+                'uploads': upload_monthly.get(m, 0)
+            }
+
+        traffic_monthly_data = [
+            {
+                'month': m,
+                'downloads': traffic_monthly[m]['downloads'],
+                'uploads': traffic_monthly[m]['uploads']
+            }
+            for m in month_names
+        ]
+
+        return jsonify({
+            'success': True,
+            'summary': {
+                'total_users': total_users,
+                'total_downloads': total_downloads,
+                'total_uploads': total_uploads
+            },
+            'login_monthly': login_monthly_data,
+            'traffic_monthly': traffic_monthly_data,
+            'year': year
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching analytics dashboard data: {str(e)}")
+        insert_audit_trail('analytics_dashboard_failed',
+            f"User '{session.get('username')}' failed to fetch analytics dashboard: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)})
+
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
 @summary_bp.route('/api/summary', methods=['GET'])
 def api_summary():
     if 'username' not in session:

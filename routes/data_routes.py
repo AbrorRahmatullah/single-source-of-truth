@@ -56,7 +56,7 @@ def api_data():
                 params.append(tanggal_data)
 
         # Hitung total
-        count_query = f"SELECT COUNT(*) FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m {where_clause}"
+        count_query = f"SELECT COUNT(*) FROM SSOT_FINAL_MONTHLY m {where_clause}"
         cursor.execute(count_query, params)
         total_records = cursor.fetchone()[0]
 
@@ -91,7 +91,7 @@ def api_data():
                         END
                 END AS Interest_Reference_Rate_SSOT
                 
-            FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
+            FROM SSOT_FINAL_MONTHLY m
             LEFT JOIN MasterInterestReferenceRateKonven k
                 ON m.IsSyariah = 'N'
                 AND (REPLACE(m.Interest_Reference_Rate, ' ', '') = REPLACE(k.interest_reference_rate, ' ', '')
@@ -244,7 +244,7 @@ def api_download_data():
                 m.Flag_Penjaminan,
                 m.Flag_Penugasan,
                 m.load_date
-            FROM [SMIDWHSSOT].[dbo].[SSOT_FINAL_MONTHLY] m
+            FROM SSOT_FINAL_MONTHLY m
             LEFT JOIN MasterInterestReferenceRateKonven k
                 ON m.IsSyariah = 'N'
                 AND (REPLACE(m.Interest_Reference_Rate, ' ', '') = REPLACE(k.interest_reference_rate, ' ', '')
