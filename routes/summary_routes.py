@@ -182,28 +182,54 @@ def api_summary():
 
         now = datetime.now()
 
+        # Get all templates from MasterCreator first
+        cursor.execute("""
+            SELECT template_name, division_name
+            FROM MasterCreator
+            ORDER BY template_name
+        """)
+        templates = cursor.fetchall()
+
         if not tanggal_data or not tanggal_data.strip():
-            # Ambil semua EOM tahun berjalan
-            cursor.execute("""
-                SELECT EOM_DATE
-                FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_EOM
-                WHERE YEAR(EOM_DATE) = YEAR(GETDATE())
-                ORDER BY EOM_DATE ASC
-            """)
-            eom_dates = [row[0] for row in cursor.fetchall()]
+            # Find the maximum (most recent) month where at least one template has data
+            max_period_date = None
 
-            # Pilih EOM terakhir yang <= tanggal hari ini
-            default_eom = None
-            for eom in eom_dates:
-                if eom <= now.date():
-                    default_eom = eom
-                else:
-                    break
+            for template in templates:
+                template_name = template[0]
 
-            # Jika belum ada yang lewat (misal awal tahun), pakai EOM pertama
-            if default_eom:
-                # Gunakan awal bulan agar konsisten dengan input manual (YYYY-MM-01)
-                tanggal_data = f"{default_eom.year}-{default_eom.month:02d}-01"
+                try:
+                    # Check if template table exists
+                    count_query = f"""
+                        SELECT COUNT(*)
+                        FROM INFORMATION_SCHEMA.TABLES
+                        WHERE TABLE_NAME = ? AND TABLE_SCHEMA = 'dbo'
+                    """
+                    cursor.execute(count_query, (template_name,))
+                    table_exists = cursor.fetchone()[0] > 0
+
+                    if table_exists:
+                        # Get the maximum period_date (most recent data) from this template
+                        period_query = f"""
+                            SELECT MAX(CAST(PERIOD_DATE AS DATE))
+                            FROM [{template_name}]
+                            WHERE PERIOD_DATE IS NOT NULL
+                        """
+                        cursor.execute(period_query)
+                        result = cursor.fetchone()
+
+                        if result and result[0]:
+                            template_max_date = result[0]
+                            # Update max_period_date if this template has a more recent date
+                            if max_period_date is None or template_max_date > max_period_date:
+                                max_period_date = template_max_date
+
+                except Exception as e:
+                    logger.warning(f"Error checking max date for template {template_name}: {str(e)}")
+                    continue
+
+            # Use the max date found, fallback to current month
+            if max_period_date:
+                tanggal_data = f"{max_period_date.year}-{max_period_date.month:02d}-01"
             else:
                 tanggal_data = f"{now.year}-{now.month:02d}-01"
 
@@ -217,14 +243,6 @@ def api_summary():
         # Pagination
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 50))
-
-        # Get all templates from MasterCreator
-        cursor.execute("""
-            SELECT template_name, division_name
-            FROM MasterCreator
-            ORDER BY template_name
-        """)
-        templates = cursor.fetchall()
 
         data = []
 
