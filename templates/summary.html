@@ -483,18 +483,22 @@
             ctx.fillText(value, padding - 10, y + 4);
         }
 
-        // Draw legend
+        // Draw legend below the chart
+        const legendY = canvas.height - padding + 35;
         ctx.font = '12px Arial';
         ctx.textAlign = 'left';
-        ctx.fillStyle = '#f093fb';
-        ctx.fillRect(padding + 10, padding + 10, 15, 15);
-        ctx.fillStyle = '#1f2937';
-        ctx.fillText('Downloads', padding + 30, padding + 22);
 
-        ctx.fillStyle = '#4facfe';
-        ctx.fillRect(padding + 150, padding + 10, 15, 15);
+        // Downloads legend
+        ctx.fillStyle = '#f093fb';
+        ctx.fillRect(padding + 10, legendY, 15, 15);
         ctx.fillStyle = '#1f2937';
-        ctx.fillText('Uploads', padding + 170, padding + 22);
+        ctx.fillText('Downloads', padding + 30, legendY + 12);
+
+        // Uploads legend
+        ctx.fillStyle = '#4facfe';
+        ctx.fillRect(padding + 150, legendY, 15, 15);
+        ctx.fillStyle = '#1f2937';
+        ctx.fillText('Uploads', padding + 170, legendY + 12);
     }
 
     function loadAnalyticsDashboard(year) {
